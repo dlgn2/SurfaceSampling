@@ -177,8 +177,8 @@ function createWhale() {
   // Store configurations for additional disks to add later
   diskGeometries = [
     { radius: 3, height: 0.5, y: -1.5 },    // Bottom (already added)
-    { radius: 2.5, height: 0.5, y: -0.75 },  // Middle (will add)
-    { radius: 2, height: 0.5, y: 0 }         // Top (will add)
+    { radius: 2.5, height: 0.5, y: -1 },  // Middle (will add)
+    { radius: 2, height: 0.5, y: -0.5 }         // Top (will add)
   ];
 
   // Reset disk index (bottom disk is already added, so we start at 0)
@@ -388,10 +388,10 @@ function createStatue() {
 
       // Create visible statue mesh (already scaled in geometry)
       const statueMaterial = new THREE.MeshPhongMaterial({
-        color: 0xFFFFFF,  // White color for better visibility
+        color: 0xFF0000,  // Red color to distinguish from sparkles
         wireframe: true,
-        transparent: true,
-        opacity: 0.5  // More opaque
+        transparent: false,
+        opacity: 1.0  // Fully opaque
       });
 
       const statueMesh = new THREE.Mesh(mergedGeometry, statueMaterial);
@@ -401,19 +401,24 @@ function createStatue() {
 
       // Position on top of disks - centered properly
       const boxCenter = box.getCenter(new THREE.Vector3());
+      console.log('Box min.y:', box.min.y, 'Box max.y:', box.max.y);
       statueMesh.position.set(
         -boxCenter.x,  // Center X
-        1 - box.min.y,  // Place bottom of statue at top of disks
+        -0.5,  // Place just below top disk
         -boxCenter.z   // Center Z
       );
       console.log('Statue position:', statueMesh.position);
 
       statueMesh.visible = true; // Always visible
-      group.add(statueMesh);
+      scene.add(statueMesh);  // Add to scene directly, not to group
 
       // Create sampler mesh with same transformations
       const samplerMesh = new THREE.Mesh(mergedGeometry.clone());
-      samplerMesh.position.copy(statueMesh.position);
+      samplerMesh.position.set(
+        -boxCenter.x,
+        -0.5,  // Same Y position as visible mesh
+        -boxCenter.z
+      );
       statueSampler = new MeshSurfaceSampler(samplerMesh).build();
 
       // Create special lines for statue (golden color)
@@ -446,12 +451,12 @@ function createStatue() {
       console.log('Creating fallback statue...');
       const fallbackGeometry = new THREE.BoxGeometry(5, 15, 5);
       const fallbackMaterial = new THREE.MeshBasicMaterial({
-        color: 0xFFD700,
+        color: 0xFF0000,  // Red to see if it's visible
         wireframe: true
       });
       const fallbackStatue = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
-      fallbackStatue.position.set(0, 10, 0);
-      group.add(fallbackStatue);
+      fallbackStatue.position.set(0, -0.5, 0);  // Place just below top disk
+      scene.add(fallbackStatue);  // Add to scene directly, not to group
       statueAdded = true;
     }
   );
@@ -486,18 +491,38 @@ function nextDot(line) {
     // For first point or if close enough to previous (strict distance)
     if (!line.previous) {
       // First point - just place it
-      line.coordinates.push(p1.x, p1.y, p1.z);
+      if (line.isStatueLine) {
+        const offsetY = -0.2; // Match the statue Y position
+        line.coordinates.push(p1.x, p1.y + offsetY, p1.z);
+      } else {
+        line.coordinates.push(p1.x, p1.y, p1.z);
+      }
       line.previous = p1.clone();
       ok = true;
     } else if (p1.distanceTo(line.previous) < pointDistance) {
       // Close enough for continuous line
-      line.coordinates.push(p1.x, p1.y, p1.z);
-      line.previous = p1.clone();
+      // Apply statue offset if this is a statue line
+      if (line.isStatueLine) {
+        const offsetY = -0.2; // Match the statue Y position
+        line.coordinates.push(p1.x, p1.y + offsetY, p1.z);
+        line.previous = p1.clone();
 
-      for (let i = 0; i < 2; i++) {
-        const spark = new Sparkle();
-        spark.setup(p1, line.material.color);
-        sparkles.push(spark);
+        const offsetP1 = p1.clone();
+        offsetP1.y += offsetY;
+        for (let i = 0; i < 2; i++) {
+          const spark = new Sparkle();
+          spark.setup(offsetP1, line.material.color);
+          sparkles.push(spark);
+        }
+      } else {
+        line.coordinates.push(p1.x, p1.y, p1.z);
+        line.previous = p1.clone();
+
+        for (let i = 0; i < 2; i++) {
+          const spark = new Sparkle();
+          spark.setup(p1, line.material.color);
+          sparkles.push(spark);
+        }
       }
       ok = true;
     }
@@ -659,7 +684,7 @@ function render(a) {
 
     // Handle statue lines separately (if statue is loaded)
     // Check absolute sparkle limit of 50000
-    const absoluteLimit = 50000;
+    const absoluteLimit = 100000;
     statueLines.forEach((l) => {
       if (l.assignedSampler && sparkles.length < absoluteLimit) {
         for (let i = 0; i < dotsPerCycle / 2; i++) { // Slower sampling for statue
