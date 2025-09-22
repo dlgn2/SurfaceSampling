@@ -27,42 +27,27 @@ scene.add(group);
 let sampler = null;
 let elephant = null;
 let paths = [];
-new OBJLoader().load(
-  "Elephant_Model.obj",
-  (obj) => { 
-    sampler = new MeshSurfaceSampler(obj.children[0]).build();
-    
-    for (let i = 0;i < 4; i++) {
-      const path = new Path(i);
-      paths.push(path);
-      group.add(path.line);
-    }
-    
-    renderer.setAnimationLoop(render);
-  },
-  (xhr) => console.log((xhr.loaded / xhr.total) * 100 + "% loaded"),
-  (err) => {
-    console.log('oops');
-    console.error(err)
-  }
-);
 
 const tempPosition = new THREE.Vector3();
-const materials = [new THREE.LineBasicMaterial({color: 0xFAAD80, transparent: true, opacity: 0.5}),
-new THREE.LineBasicMaterial({color: 0xFF6767, transparent: true, opacity: 0.5}),
-new THREE.LineBasicMaterial({color: 0xFF3D68, transparent: true, opacity: 0.5}),
-new THREE.LineBasicMaterial({color: 0xA73489, transparent: true, opacity: 0.5})];
+const materials = [
+  new THREE.LineBasicMaterial({color: 0xFAAD80, transparent: true, opacity: 0.5}),
+  new THREE.LineBasicMaterial({color: 0xFF6767, transparent: true, opacity: 0.5}),
+  new THREE.LineBasicMaterial({color: 0xFF3D68, transparent: true, opacity: 0.5}),
+  new THREE.LineBasicMaterial({color: 0xA73489, transparent: true, opacity: 0.5})
+];
+
 class Path {
-  constructor (index) {
+  constructor(index) {
     this.geometry = new THREE.BufferGeometry();
     this.material = materials[index % 4];
     this.line = new THREE.Line(this.geometry, this.material);
     this.vertices = [];
-    
+
     sampler.sample(tempPosition);
     this.previousPoint = tempPosition.clone();
   }
-  update () {
+
+  update() {
     let pointFound = false;
     while (!pointFound) {
       sampler.sample(tempPosition);
@@ -76,10 +61,9 @@ class Path {
   }
 }
 
-
 function render(a) {
   group.rotation.y += 0.002;
-  
+
   paths.forEach(path => {
     if (path.vertices.length < 10000) {
       path.update();
@@ -96,3 +80,57 @@ function onWindowResize() {
   camera.updateProjectionMatrix();
   renderer.setSize(elContent.offsetWidth, elContent.offsetHeight);
 }
+
+// Load OBJ model
+const loader = new OBJLoader();
+loader.load(
+  'Elephant_Model.obj',
+  (obj) => {
+    elephant = obj.children[0];
+
+    // Add material to make it visible (optional)
+    elephant.material = new THREE.MeshBasicMaterial({
+      color: 0x333333,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.05
+    });
+
+    // Optional: add to scene if you want to see the wireframe
+    // scene.add(elephant);
+
+    sampler = new MeshSurfaceSampler(elephant).build();
+
+    for (let i = 0; i < 4; i++) {
+      const path = new Path(i);
+      paths.push(path);
+      group.add(path.line);
+    }
+
+    renderer.setAnimationLoop(render);
+  },
+  (xhr) => {
+    console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+  },
+  (error) => {
+    console.error('Error loading OBJ:', error);
+    // Fallback to procedural geometry
+    const geometry = new THREE.TorusKnotGeometry(40, 15, 100, 16);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x333333,
+      wireframe: true,
+      visible: false
+    });
+    elephant = new THREE.Mesh(geometry, material);
+
+    sampler = new MeshSurfaceSampler(elephant).build();
+
+    for (let i = 0; i < 4; i++) {
+      const path = new Path(i);
+      paths.push(path);
+      group.add(path.line);
+    }
+
+    renderer.setAnimationLoop(render);
+  }
+);

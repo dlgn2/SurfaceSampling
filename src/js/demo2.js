@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler.js';
+import { createDotTexture } from './createDotTexture.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -31,7 +31,7 @@ const bloomPass = new UnrealBloomPass(
   0.85
 );
 bloomPass.threshold = 0;
-bloomPass.strength = 0.6;
+bloomPass.strength = 1.2;
 
 const composer = new EffectComposer(renderer);
 composer.setPixelRatio(pixelRatio);
@@ -47,9 +47,7 @@ const sparklesGeometry = new THREE.BufferGeometry();
 const sparklesMaterial = new THREE.ShaderMaterial({
   uniforms: {
     pointTexture: {
-      value: new THREE.TextureLoader().load(
-        "dotTexture.png"
-      )
+      value: new THREE.CanvasTexture(createDotTexture())
     }
   },
   vertexShader: document.getElementById("vertexshader").textContent,
@@ -68,11 +66,11 @@ let linesMaterials = [
   new THREE.LineBasicMaterial({ transparent: true, color: 0xCFD6DE })
 ];
 let galaxyColors = [
-  new THREE.Color("#f9fbf2").multiplyScalar(0.8),
-  new THREE.Color("#ffede1").multiplyScalar(0.8),
-  new THREE.Color("#05c7f2").multiplyScalar(0.8),
-  new THREE.Color("#0597f2").multiplyScalar(0.8),
-  new THREE.Color("#0476d9").multiplyScalar(0.8)
+  new THREE.Color("#f9fbf2"),
+  new THREE.Color("#ffede1"),
+  new THREE.Color("#05c7f2"),
+  new THREE.Color("#0597f2"),
+  new THREE.Color("#0476d9")
 ];
 function dots() {
   sampler = new MeshSurfaceSampler(whale).build();
@@ -88,19 +86,16 @@ function dots() {
 }
 
 let whale = null;
-const loader = new OBJLoader();
-loader.load(
-  "Whale_Model.obj",
-  (obj) => {
-    whale = obj.children[0];
-    whale.geometry.scale(0.3, 0.3, 0.3);
-    whale.geometry.translate(0, -2, 0);
-    whale.geometry.rotateY(0.2);
-    dots();
-  },
-  (xhr) => console.log((xhr.loaded / xhr.total) * 100 + "% loaded"),
-  (err) => console.log("An error happened", err)
-);
+function createWhale() {
+  const geometry = new THREE.TorusKnotGeometry(2, 0.5, 100, 16);
+  const material = new THREE.MeshBasicMaterial({ color: 0x333333, wireframe: true });
+  whale = new THREE.Mesh(geometry, material);
+  whale.geometry.scale(0.5, 0.5, 0.5);
+  whale.visible = false;
+  scene.add(whale);
+  dots();
+}
+createWhale();
 
 const p1 = new THREE.Vector3();
 function nextDot(line) {
@@ -173,7 +168,7 @@ class Star {
     this.y = this.r * Math.cos(this.phi);
     this.z = this.r * Math.sin(this.phi) * Math.cos(this.theta);
 
-    this.size = Math.random() * 4 + 0.5 * pixelRatio;
+    this.size = Math.random() * 4 + 2 * pixelRatio;
     this.color = color;
   }
   update() {
@@ -200,6 +195,10 @@ for (let i = 0; i < 1500; i++) {
   stars.push(star);
 }
 const starsGeometry = new THREE.BufferGeometry();
+starsGeometry.setAttribute(
+  "position",
+  new THREE.Float32BufferAttribute(galaxyGeometryVertices, 3)
+);
 starsGeometry.setAttribute(
   "size",
   new THREE.Float32BufferAttribute(galaxyGeometrySizes, 1)

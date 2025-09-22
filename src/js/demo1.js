@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler.js';
+import { createDotTexture } from './createDotTexture.js';
 
 const elContent = document.querySelector('.content');
 const scene = new THREE.Scene();
@@ -30,7 +30,7 @@ const sparklesGeometry = new THREE.BufferGeometry();
 const sparklesMaterial = new THREE.ShaderMaterial({
   uniforms: {
     pointTexture: {
-      value: new THREE.TextureLoader().load('dotTexture.png')
+      value: new THREE.CanvasTexture(createDotTexture())
     }
   },
   vertexShader: document.getElementById("vertexshader").textContent,
@@ -46,8 +46,19 @@ const p1 = new THREE.Vector3();
 let sampler = null;
 const lines = [];
 let linesColors = [new THREE.Color(0xFAAD80).multiplyScalar(0.5), new THREE.Color(0xFF6767).multiplyScalar(0.5), new THREE.Color(0xFF3D68).multiplyScalar(0.5), new THREE.Color(0xA73489).multiplyScalar(0.5)];
+let sphereMesh = null;
+
+function createSphere() {
+  const geometry = new THREE.SphereGeometry(15, 32, 16);
+  const material = new THREE.MeshBasicMaterial({ color: 0x333333, wireframe: true });
+  sphereMesh = new THREE.Mesh(geometry, material);
+  scene.add(sphereMesh);
+  initLines();
+}
+
 function initLines() {
-  sampler = new MeshSurfaceSampler(turtle).build();
+  if (!sphereMesh) return;
+  sampler = new MeshSurfaceSampler(sphereMesh).build();
   
   for (let i = 0; i < 6; i++) {
     sampler.sample(p1);
@@ -61,18 +72,7 @@ function initLines() {
   renderer.setAnimationLoop(render);
 }
 
-let turtle = null;
-new OBJLoader().load(
-  "Turtle_Model.obj",
-  (obj) => {
-    turtle = obj.children[0];
-    turtle.geometry.rotateX(Math.PI * -0.5);
-    turtle.geometry.rotateY(Math.PI * -0.3);
-    initLines();
-  },
-  (xhr) => console.log((xhr.loaded / xhr.total) * 100 + "% loaded"),
-  (err) => console.error(err)
-);
+createSphere();
 
 const tempSparklesArrayColors = [];
 function findNextVector(line) {
