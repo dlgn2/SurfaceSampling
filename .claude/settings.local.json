@@ -1,13 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run build:*)",
-      "Bash(npm start)",
-      "Bash(npm ls:*)",
-      "Bash(npm install:*)",
-      "Bash(yarn add:*)",
-      "Bash(yarn dev)",
-      "Bash(dir C:UsersEnesDocumentsGitHubSurfaceSamplingstatic*.obj)"
+      "WebSearch",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []

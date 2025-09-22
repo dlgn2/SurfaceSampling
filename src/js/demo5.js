@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { createDotTexture } from './createDotTexture.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
@@ -33,6 +35,15 @@ const renderer = new THREE.WebGLRenderer();
 renderer.setPixelRatio(pixelRatio);
 renderer.setSize(elContent.offsetWidth, elContent.offsetHeight);
 elContent.appendChild(renderer.domElement);
+
+// Add OrbitControls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.screenSpacePanning = false;
+controls.minDistance = 5;
+controls.maxDistance = 100;
+controls.maxPolarAngle = Math.PI;
 
 const renderScene = new RenderPass(scene, camera);
 
@@ -119,6 +130,9 @@ let diskAddCounter = 0;
 let visibleDisks = []; // Array to hold visible disk meshes
 let diskMeshes = []; // Array to hold individual disk meshes for sampling
 let samplers = []; // Array to hold samplers for each disk
+let statueAdded = false;
+let statueSampler = null;
+let statueLines = [];
 
 function createWhale() {
   // Clear any existing visible disks
@@ -289,6 +303,160 @@ function addNextDisk() {
 
   return true;
 }
+
+function createStatue() {
+  if (statueAdded) return;
+
+  console.log('Loading David statue...');
+
+  const loader = new OBJLoader();
+  loader.load(
+    '/David.obj',
+    (obj) => {
+      console.log('David statue loaded successfully', obj);
+
+      // Apply scale to the entire OBJ first
+      obj.scale.set(4, 4, 4);  // Half of previous size
+      obj.updateMatrixWorld(true);
+
+      // Collect all meshes from the OBJ
+      const meshes = [];
+      obj.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          meshes.push(child);
+        }
+      });
+
+      if (meshes.length === 0) {
+        console.error('No meshes found in David.obj');
+        return;
+      }
+
+      // Merge all geometries for sampling
+      const mergedGeometry = new THREE.BufferGeometry();
+      const positions = [];
+      const normals = [];
+      const indices = [];
+      let vertexOffset = 0;
+
+      meshes.forEach(mesh => {
+        const geo = mesh.geometry;
+        const pos = geo.attributes.position;
+        const norm = geo.attributes.normal || { getX: () => 0, getY: () => 1, getZ: () => 0 };
+        const index = geo.index;
+
+        // Apply mesh transformations to vertices
+        const tempPos = new THREE.Vector3();
+        const tempNorm = new THREE.Vector3();
+
+        for (let i = 0; i < pos.count; i++) {
+          tempPos.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+          tempPos.applyMatrix4(mesh.matrixWorld);
+          positions.push(tempPos.x, tempPos.y, tempPos.z);
+
+          tempNorm.set(norm.getX(i), norm.getY(i), norm.getZ(i));
+          tempNorm.transformDirection(mesh.matrixWorld).normalize();
+          normals.push(tempNorm.x, tempNorm.y, tempNorm.z);
+        }
+
+        // Add indices
+        if (index) {
+          for (let i = 0; i < index.count; i++) {
+            indices.push(index.getX(i) + vertexOffset);
+          }
+        } else {
+          // Generate indices for non-indexed geometry
+          for (let i = 0; i < pos.count; i += 3) {
+            indices.push(i + vertexOffset, i + 1 + vertexOffset, i + 2 + vertexOffset);
+          }
+        }
+        vertexOffset += pos.count;
+      });
+
+      mergedGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      mergedGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+      mergedGeometry.setIndex(indices);
+
+      // Calculate bounding box to scale and position properly
+      mergedGeometry.computeBoundingBox();
+      const box = mergedGeometry.boundingBox;
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+
+      console.log('David OBJ size:', size);
+      console.log('David OBJ center:', center);
+
+      // Create visible statue mesh (already scaled in geometry)
+      const statueMaterial = new THREE.MeshPhongMaterial({
+        color: 0xFFFFFF,  // White color for better visibility
+        wireframe: true,
+        transparent: true,
+        opacity: 0.5  // More opaque
+      });
+
+      const statueMesh = new THREE.Mesh(mergedGeometry, statueMaterial);
+
+      // No additional scale needed - already applied to OBJ
+      console.log('Statue mesh created with pre-scaled geometry');
+
+      // Position on top of disks - centered properly
+      const boxCenter = box.getCenter(new THREE.Vector3());
+      statueMesh.position.set(
+        -boxCenter.x,  // Center X
+        1 - box.min.y,  // Place bottom of statue at top of disks
+        -boxCenter.z   // Center Z
+      );
+      console.log('Statue position:', statueMesh.position);
+
+      statueMesh.visible = true; // Always visible
+      group.add(statueMesh);
+
+      // Create sampler mesh with same transformations
+      const samplerMesh = new THREE.Mesh(mergedGeometry.clone());
+      samplerMesh.position.copy(statueMesh.position);
+      statueSampler = new MeshSurfaceSampler(samplerMesh).build();
+
+      // Create special lines for statue (golden color)
+      const statueMaterials = [
+        new THREE.LineBasicMaterial({ color: 0xFFD700, transparent: true, opacity: 0.9 }), // Gold
+        new THREE.LineBasicMaterial({ color: 0xFFA500, transparent: true, opacity: 0.9 })  // Orange
+      ];
+
+      for (let i = 0; i < 6; i++) {
+        const linesMesh = new THREE.Line(new THREE.BufferGeometry(), statueMaterials[i % 2]);
+        linesMesh.coordinates = [];
+        linesMesh.previous = null;
+        linesMesh.isStatueLine = true;
+        linesMesh.assignedSampler = statueSampler;
+        statueLines.push(linesMesh);
+        scene.add(linesMesh);
+      }
+
+      statueAdded = true;
+      console.log('David statue added successfully!');
+    },
+    (xhr) => {
+      console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+    },
+    (error) => {
+      console.error('Error loading David.obj:', error);
+      console.error('Full error details:', error.message, error.stack);
+
+      // Try with fallback - create a simple box as statue
+      console.log('Creating fallback statue...');
+      const fallbackGeometry = new THREE.BoxGeometry(5, 15, 5);
+      const fallbackMaterial = new THREE.MeshBasicMaterial({
+        color: 0xFFD700,
+        wireframe: true
+      });
+      const fallbackStatue = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
+      fallbackStatue.position.set(0, 10, 0);
+      group.add(fallbackStatue);
+      statueAdded = true;
+    }
+  );
+}
+
 createWhale();
 
 const p1 = new THREE.Vector3();
@@ -438,6 +606,9 @@ let fps = 60;
 function render(a) {
   requestAnimationFrame(render);
 
+  // Update controls even when paused
+  controls.update();
+
   if (isPaused) return;
 
   // Calculate FPS
@@ -450,10 +621,10 @@ function render(a) {
     updateStats();
   }
 
-  galaxyPoints.rotation.y += 0.0005;
+  // galaxyPoints.rotation.y += 0.0005;  // Disabled auto rotation
 
-  group.rotation.x = Math.sin(a * 0.0003) * 0.1;
-  group.rotation.y += 0.001;
+  // group.rotation.x = Math.sin(a * 0.0003) * 0.1;  // Disabled auto rotation
+  // group.rotation.y += 0.001;  // Disabled auto rotation
 
   // Add next disk based on diskSpeedFrames
   diskAddCounter++;
@@ -463,11 +634,18 @@ function render(a) {
       console.log('Successfully added disk', currentDiskIndex);
       diskAddCounter = 0;
       updateStats();
+
+      // Add statue after all disks are added
+      if (currentDiskIndex === diskGeometries.length - 1 && !statueAdded) {
+        console.log('All disks added, loading statue...');
+        setTimeout(() => createStatue(), 500); // Small delay for visual effect
+      }
     }
   }
 
   if (a - _prev > drawSpeed) {
     const currentSparkleLimit = baseSparkleLimit + (currentDiskIndex * sparklesPerDisk);
+
     lines.forEach((l) => {
       if (sparkles.length < currentSparkleLimit) {  // Dynamic limit based on disk count
         for (let i = 0; i < dotsPerCycle; i++) {
@@ -477,6 +655,22 @@ function render(a) {
       const tempVertices = new Float32Array(l.coordinates);
       l.geometry.setAttribute("position", new THREE.BufferAttribute(tempVertices, 3));
       l.geometry.computeBoundingSphere();
+    });
+
+    // Handle statue lines separately (if statue is loaded)
+    // Check absolute sparkle limit of 50000
+    const absoluteLimit = 50000;
+    statueLines.forEach((l) => {
+      if (l.assignedSampler && sparkles.length < absoluteLimit) {
+        for (let i = 0; i < dotsPerCycle / 2; i++) { // Slower sampling for statue
+          if (sparkles.length < absoluteLimit) {
+            nextDot(l);
+          }
+        }
+        const tempVertices = new Float32Array(l.coordinates);
+        l.geometry.setAttribute("position", new THREE.BufferAttribute(tempVertices, 3));
+        l.geometry.computeBoundingSphere();
+      }
     });
     updateSparklesGeometry();
     _prev = a;
