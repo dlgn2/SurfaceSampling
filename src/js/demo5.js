@@ -115,6 +115,7 @@ function dots(isInitial = false, skipSamplerUpdate = false) {
       linesMesh.previous = null;
       linesMesh.samplerIndex = i; // Add index for sampler assignment
       linesMesh.assignedSampler = null;
+      linesMesh.assignedDiskIndex = 0; // Default to bottom disk
       lines.push(linesMesh);
       group.add(linesMesh);
     }
@@ -133,6 +134,15 @@ let samplers = []; // Array to hold samplers for each disk
 let statueAdded = false;
 let statueSampler = null;
 let statueLines = [];
+
+// Mouse hover animation variables
+let isHovering = false;
+let animationProgress = 0;
+let targetProgress = 0;
+const animationSpeed = 0.05; // Smooth animation speed
+let raycaster = new THREE.Raycaster();
+let mouse = new THREE.Vector2();
+let statueMeshRef = null; // Reference to statue mesh for animation
 
 function createWhale() {
   // Clear any existing visible disks
@@ -162,24 +172,36 @@ function createWhale() {
   const diskSampler = new MeshSurfaceSampler(diskMesh).build();
   samplers.push(diskSampler);
 
-  // Also add visible version for display
+  // Also add visible version for display (as separate geometry)
   const visibleMaterial = new THREE.MeshBasicMaterial({
     color: 0x444444,
     wireframe: true,
     transparent: true,
     opacity: 0.2
   });
-  const visibleDisk = new THREE.Mesh(bottomDisk.clone(), visibleMaterial);
+  const visibleDiskGeometry = new THREE.CylinderGeometry(3, 3, 0.5, 32, 1, false);
+  const visibleDisk = new THREE.Mesh(visibleDiskGeometry, visibleMaterial);
+  visibleDisk.position.y = -1.5;
   visibleDisk.visible = showDisks;
   group.add(visibleDisk);
   visibleDisks.push(visibleDisk);
 
   // Store configurations for additional disks to add later
-  diskGeometries = [
-    { radius: 3, height: 0.5, y: -1.5 },    // Bottom (already added)
-    { radius: 2.5, height: 0.5, y: -1 },  // Middle (will add)
-    { radius: 2, height: 0.5, y: -0.5 }         // Top (will add)
+  // Original positions (compressed state)
+  const originalPositions = [
+    { radius: 3, height: 0.5, y: -1.5 },    // Bottom
+    { radius: 2.5, height: 0.5, y: -1 },    // Middle
+    { radius: 2, height: 0.5, y: -0.5 }     // Top
   ];
+
+  // Expanded positions (hover state)
+  const expandedPositions = [
+    { radius: 32, height: 0.5, y: -1.5 },   // Bottom stays same
+    { radius: 2.5, height: 0.5, y: -0.5 },  // Middle moves up
+    { radius: 2, height: 0.5, y: 0.5 }      // Top moves up
+  ];
+
+  diskGeometries = originalPositions.map(p => ({...p})); // Start with original positions
 
   // Reset disk index (bottom disk is already added, so we start at 0)
   currentDiskIndex = 0;
@@ -277,6 +299,7 @@ function addNextDisk() {
       const diskIndex = Math.floor(index / linesPerDisk);
       if (diskIndex < samplers.length) {
         line.assignedSampler = samplers[diskIndex];
+        line.assignedDiskIndex = diskIndex; // Update disk index
         // Reset some lines to start fresh on new disk
         if (diskIndex === samplers.length - 1) {
           line.previous = null;
@@ -287,14 +310,21 @@ function addNextDisk() {
     console.log('Redistributed lines across', samplers.length, 'disks');
   }
 
-  // Add visible version
+  // Add visible version as separate mesh
   const visibleMaterial = new THREE.MeshBasicMaterial({
     color: 0x444444,
     wireframe: true,
     transparent: true,
     opacity: 0.2
   });
-  const newVisibleDisk = new THREE.Mesh(newDiskGeometry, visibleMaterial);
+  const newVisibleDiskGeometry = new THREE.CylinderGeometry(
+    newDiskConfig.radius,
+    newDiskConfig.radius,
+    newDiskConfig.height,
+    32, 1, false
+  );
+  const newVisibleDisk = new THREE.Mesh(newVisibleDiskGeometry, visibleMaterial);
+  newVisibleDisk.position.y = newDiskConfig.y;
   newVisibleDisk.visible = showDisks;
   group.add(newVisibleDisk);
   visibleDisks.push(newVisibleDisk);
@@ -411,6 +441,7 @@ function createStatue() {
 
       statueMesh.visible = true; // Always visible
       scene.add(statueMesh);  // Add to scene directly, not to group
+      statueMeshRef = statueMesh; // Store reference for animation
 
       // Create sampler mesh with same transformations
       const samplerMesh = new THREE.Mesh(mergedGeometry.clone());
@@ -457,6 +488,7 @@ function createStatue() {
       const fallbackStatue = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
       fallbackStatue.position.set(0, -0.5, 0);  // Place just below top disk
       scene.add(fallbackStatue);  // Add to scene directly, not to group
+      statueMeshRef = fallbackStatue; // Store reference for animation
       statueAdded = true;
     }
   );
@@ -477,6 +509,7 @@ function nextDot(line) {
     if (!line.assignedSampler && samplers.length > 0) {
       // Assign sampler based on line index to distribute evenly
       line.assignedSampler = samplers[line.samplerIndex % samplers.length];
+      line.assignedDiskIndex = line.samplerIndex % samplers.length;
     }
 
     // Use only the assigned sampler for this line
@@ -512,6 +545,7 @@ function nextDot(line) {
         for (let i = 0; i < 2; i++) {
           const spark = new Sparkle();
           spark.setup(offsetP1, line.material.color);
+          spark.isStatue = true; // Mark as statue sparkle
           sparkles.push(spark);
         }
       } else {
@@ -521,6 +555,8 @@ function nextDot(line) {
         for (let i = 0; i < 2; i++) {
           const spark = new Sparkle();
           spark.setup(p1, line.material.color);
+          spark.diskIndex = line.assignedDiskIndex; // Track which disk this sparkle belongs to
+          spark.baseY = p1.y; // Store base Y position
           sparkles.push(spark);
         }
       }
@@ -628,11 +664,122 @@ let frameCount = 0;
 let lastTime = performance.now();
 let fps = 60;
 
+function rebuildWhaleGeometry() {
+  if (!whale || currentDiskIndex < 1) return;
+
+  // Calculate current disk positions
+  const middleOffset = animationProgress * 0.5;
+  const topOffset = animationProgress * 1;
+
+  // Create new merged geometry with updated positions
+  const geometries = [];
+
+  // Bottom disk (always at -1.5)
+  const bottomDisk = new THREE.CylinderGeometry(3, 3, 0.5, 32, 1, false);
+  bottomDisk.translate(0, -1.5, 0);
+  geometries.push(bottomDisk);
+
+  // Middle disk (animated)
+  if (currentDiskIndex >= 1) {
+    const middleDisk = new THREE.CylinderGeometry(2.5, 2.5, 0.5, 32, 1, false);
+    middleDisk.translate(0, -1 + middleOffset, 0);
+    geometries.push(middleDisk);
+  }
+
+  // Top disk (animated)
+  if (currentDiskIndex >= 2) {
+    const topDisk = new THREE.CylinderGeometry(2, 2, 0.5, 32, 1, false);
+    topDisk.translate(0, -0.5 + topOffset, 0);
+    geometries.push(topDisk);
+  }
+
+  // Merge geometries
+  const mergedGeometry = new THREE.BufferGeometry();
+  const positions = [];
+  const normals = [];
+  const indices = [];
+  let vertexOffset = 0;
+
+  geometries.forEach(geo => {
+    const pos = geo.attributes.position;
+    const norm = geo.attributes.normal;
+    const index = geo.index;
+
+    for (let i = 0; i < pos.count; i++) {
+      positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+      normals.push(norm.getX(i), norm.getY(i), norm.getZ(i));
+    }
+
+    for (let i = 0; i < index.count; i++) {
+      indices.push(index.getX(i) + vertexOffset);
+    }
+
+    vertexOffset += pos.count;
+  });
+
+  mergedGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  mergedGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  mergedGeometry.setIndex(indices);
+
+  // Update whale geometry
+  whale.geometry.dispose();
+  whale.geometry = mergedGeometry;
+  whale.geometry.computeBoundingBox();
+  whale.geometry.computeBoundingSphere();
+
+  // Rebuild sampler
+  sampler = new MeshSurfaceSampler(whale).build();
+}
+
+function updateDiskPositions() {
+  // Smooth animation transition
+  animationProgress += (targetProgress - animationProgress) * animationSpeed;
+
+  // Only update if we have visible disks
+  if (visibleDisks.length === 0) return;
+
+  // Calculate position offsets
+  const middleOffset = animationProgress * 0.5; // 0 to 0.5
+  const topOffset = animationProgress * 1; // 0 to 1
+
+  // Update middle disk (index 1) if it exists
+  if (visibleDisks[1] && diskMeshes[1]) {
+    const middleY = -1 + middleOffset; // From -1 to -0.5
+    visibleDisks[1].position.y = middleY;
+    diskMeshes[1].position.y = middleY; // Update sampling mesh too
+  }
+
+  // Update top disk (index 2) if it exists
+  if (visibleDisks[2] && diskMeshes[2]) {
+    const topY = -0.5 + topOffset; // From -0.5 to 0.5
+    visibleDisks[2].position.y = topY;
+    diskMeshes[2].position.y = topY; // Update sampling mesh too
+
+    // Update statue position to follow top disk
+    if (statueMeshRef) {
+      statueMeshRef.position.y = topY + 0.25; // Keep statue on top of the disk
+    }
+  }
+
+  // Update the merged whale mesh geometry positions
+  if (whale && whale.geometry && currentDiskIndex >= 2) {
+    const positions = whale.geometry.attributes.position;
+
+    // We need to update the Y positions of vertices
+    // This is complex because we need to know which vertices belong to which disk
+    // For now, let's rebuild the geometry
+    rebuildWhaleGeometry();
+  }
+}
+
 function render(a) {
   requestAnimationFrame(render);
 
   // Update controls even when paused
   controls.update();
+
+  // Update disk animations
+  updateDiskPositions();
 
   if (isPaused) return;
 
@@ -677,14 +824,27 @@ function render(a) {
           nextDot(l);
         }
       }
-      const tempVertices = new Float32Array(l.coordinates);
+
+      // Apply Y offset to line vertices based on disk animation
+      const offsetVertices = [];
+      for (let i = 0; i < l.coordinates.length; i += 3) {
+        let yOffset = 0;
+        if (l.assignedDiskIndex === 1) {
+          yOffset = animationProgress * 0.5;
+        } else if (l.assignedDiskIndex === 2) {
+          yOffset = animationProgress * 1;
+        }
+        offsetVertices.push(l.coordinates[i], l.coordinates[i+1] + yOffset, l.coordinates[i+2]);
+      }
+
+      const tempVertices = new Float32Array(offsetVertices);
       l.geometry.setAttribute("position", new THREE.BufferAttribute(tempVertices, 3));
       l.geometry.computeBoundingSphere();
     });
 
     // Handle statue lines separately (if statue is loaded)
     // Check absolute sparkle limit of 50000
-    const absoluteLimit = 100000;
+    const absoluteLimit = 75000;
     statueLines.forEach((l) => {
       if (l.assignedSampler && sparkles.length < absoluteLimit) {
         for (let i = 0; i < dotsPerCycle / 2; i++) { // Slower sampling for statue
@@ -692,7 +852,15 @@ function render(a) {
             nextDot(l);
           }
         }
-        const tempVertices = new Float32Array(l.coordinates);
+
+        // Apply Y offset to statue line vertices based on top disk animation
+        const offsetVertices = [];
+        const statueYOffset = animationProgress * 1; // Follow top disk
+        for (let i = 0; i < l.coordinates.length; i += 3) {
+          offsetVertices.push(l.coordinates[i], l.coordinates[i+1] + statueYOffset, l.coordinates[i+2]);
+        }
+
+        const tempVertices = new Float32Array(offsetVertices);
         l.geometry.setAttribute("position", new THREE.BufferAttribute(tempVertices, 3));
         l.geometry.computeBoundingSphere();
       }
@@ -704,7 +872,19 @@ function render(a) {
   let tempSparklesArray = [];
   sparkles.forEach((s) => {
     s.update();
-    tempSparklesArray.push(s.x, s.y, s.z);
+
+    // Apply disk animation offset
+    let yOffset = 0;
+    if (s.isStatue) {
+      // Statue sparkles follow top disk
+      yOffset = animationProgress * 1; // Same as top disk
+    } else if (s.diskIndex === 1) {
+      yOffset = animationProgress * 0.5; // Middle disk offset
+    } else if (s.diskIndex === 2) {
+      yOffset = animationProgress * 1; // Top disk offset
+    }
+
+    tempSparklesArray.push(s.x, s.y + yOffset, s.z);
   });
 
   sparklesGeometry.setAttribute("position", new THREE.Float32BufferAttribute(tempSparklesArray, 3));
@@ -839,3 +1019,26 @@ function initControls() {
 
 // Initialize controls when DOM is ready
 setTimeout(initControls, 100);
+
+// Mouse event handlers for hover effect
+function onMouseMove(event) {
+  // Calculate mouse position in normalized device coordinates
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+  // Update the raycaster with camera and mouse position
+  raycaster.setFromCamera(mouse, camera);
+
+  // Check intersections with visible disks
+  const intersects = raycaster.intersectObjects(visibleDisks);
+
+  if (intersects.length > 0) {
+    isHovering = true;
+    targetProgress = 1; // Animate to expanded position
+  } else {
+    isHovering = false;
+    targetProgress = 0; // Animate back to original position
+  }
+}
+
+window.addEventListener('mousemove', onMouseMove, false);
