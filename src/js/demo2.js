@@ -87,10 +87,33 @@ function dots() {
 
 let whale = null;
 function createWhale() {
-  const geometry = new THREE.TorusKnotGeometry(2, 0.5, 100, 16);
+  // Create heart shape
+  const heartShape = new THREE.Shape();
+  const x = 0, y = 0;
+  heartShape.moveTo(x + 2.5, y + 2.5);
+  heartShape.bezierCurveTo(x + 2.5, y + 2.5, x + 2, y, x, y);
+  heartShape.bezierCurveTo(x - 3, y, x - 3, y + 3.5, x - 3, y + 3.5);
+  heartShape.bezierCurveTo(x - 3, y + 5.5, x - 1.5, y + 7.7, x + 2.5, y + 9.5);
+  heartShape.bezierCurveTo(x + 6, y + 7.7, x + 8, y + 5.5, x + 8, y + 3.5);
+  heartShape.bezierCurveTo(x + 8, y + 3.5, x + 8, y, x + 5, y);
+  heartShape.bezierCurveTo(x + 3.5, y, x + 2.5, y + 2.5, x + 2.5, y + 2.5);
+
+  const extrudeSettings = {
+    depth: 4,
+    bevelEnabled: true,
+    bevelSegments: 2,
+    steps: 2,
+    bevelSize: 1,
+    bevelThickness: 1
+  };
+
+  const geometry = new THREE.ExtrudeGeometry(heartShape, extrudeSettings);
+  geometry.center();
+  geometry.rotateX(Math.PI);
+  geometry.scale(0.3, 0.3, 0.3);
+
   const material = new THREE.MeshBasicMaterial({ color: 0x333333, wireframe: true });
   whale = new THREE.Mesh(geometry, material);
-  whale.geometry.scale(0.5, 0.5, 0.5);
   whale.visible = false;
   scene.add(whale);
   dots();

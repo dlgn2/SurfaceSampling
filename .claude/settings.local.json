@@ -6,7 +6,8 @@
       "Bash(npm ls:*)",
       "Bash(npm install:*)",
       "Bash(yarn add:*)",
-      "Bash(yarn dev)"
+      "Bash(yarn dev)",
+      "Bash(dir C:UsersEnesDocumentsGitHubSurfaceSamplingstatic*.obj)"
     ],
     "deny": [],
     "ask": []
