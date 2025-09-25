@@ -72,9 +72,13 @@ let marbleTexture = null;
 let marbleNormalMap = null;
 let marbleAOMap = null;
 let marbleRoughnessMap = null;
+let diskRevealStarted = false;
+let diskRevealProgress = [0, 0, 0];  // Her disk için ayrı progress
+let currentRevealingDisk = 0;  // Hangi disk reveal oluyor
 
 // Disks & paths
 let visibleDisks = [];
+let real3DDisks = [];
 let sampler = null;
 let statueSampler = null;
 let statueMeshRef = null;
@@ -338,6 +342,7 @@ function createDisks() {
     disk.material.dispose();
   });
   visibleDisks = [];
+  real3DDisks = [];
   paths = [];
 
   const diskConfigs = [
@@ -377,6 +382,39 @@ function createDisks() {
     visibleDisk.position.y = config.y;
     group.add(visibleDisk);
     visibleDisks.push(visibleDisk);
+
+    // Create 3D textured disk (initially hidden)
+    const real3DDiskGeometry = new THREE.CylinderGeometry(
+      config.radius,
+      config.radius,
+      config.height,
+      64, // More segments for smooth appearance
+      1,
+      false
+    );
+
+    const real3DDiskMaterial = new THREE.MeshStandardMaterial({
+      color: 0xaaaaaa,  // Daha koyu gri ton
+      map: null, // Will be set when textures load
+      normalMap: null,
+      aoMap: null,
+      roughnessMap: null,
+      roughness: 1,  // Daha mat (0.7'den 0.9'a)
+      metalness: 0.0,  // Metal değil
+      envMapIntensity: 0.3,  // Çevre yansıması azaltıldı
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      clippingPlanes: []
+    });
+
+    const real3DDisk = new THREE.Mesh(real3DDiskGeometry, real3DDiskMaterial);
+    real3DDisk.position.y = config.y;
+    real3DDisk.visible = false;
+    real3DDisk.userData.originalY = config.y;
+    real3DDisk.userData.material = real3DDiskMaterial;
+    scene.add(real3DDisk);
+    real3DDisks.push(real3DDisk);
   });
 
   // tekleştir (sampler için görünmeyen kafes)
@@ -642,30 +680,31 @@ function processStatueModel(model, scale) {
   const box = mergedGeometry.boundingBox;
   const center = box.getCenter(new THREE.Vector3());
 
-  // Material - MeshStandardMaterial with PBR support for plaster
+  // Material - MeshStandardMaterial with reduced shininess
   const statueMaterial = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
+    color: 0xcccccc,        // Gri ton beyaz yerine
     map: null,              // Diffuse texture
     normalMap: null,        // Normal map for details
-    normalScale: new THREE.Vector2(0.8, 0.8), // Normal intensity
+    normalScale: new THREE.Vector2(0.3, 0.3), // Daha az normal
     aoMap: null,            // Ambient occlusion
-    aoMapIntensity: 0.6,    // AO intensity
+    aoMapIntensity: 0.4,    // AO intensity
     roughnessMap: null,     // Roughness texture
-    roughness: 0.7,         // Default roughness for plaster
+    roughness: 0.95,        // Çok mat
     metalness: 0.0,         // Plaster is non-metallic
+    envMapIntensity: 0.2,   // Çevre yansıması minimize
     transparent: true,
     opacity: 0,
     side: THREE.DoubleSide,
   });
 
-  // Lights
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+  // Lights - Daha dengeli aydınlatma
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);  // Ambient artırıldı
   scene.add(ambientLight);
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-  directionalLight.position.set(5, 10, 5);
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.2);  // Directional azaltıldı
+  directionalLight.position.set(2, 3, 2);  // Daha alçak pozisyon
   scene.add(directionalLight);
-  const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
-  directionalLight2.position.set(-5, 5, -5);
+  const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.15);  // Daha az ışık
+  directionalLight2.position.set(-2, 2, -2);  // Daha alçak pozisyon
   scene.add(directionalLight2);
 
   // White statue mesh (center to origin)
@@ -768,6 +807,17 @@ function render() {
 
   updateDiskPositions();
 
+  // Update 3D disk positions with hover animation (always)
+  if (real3DDisks && real3DDisks.length > 0) {
+    real3DDisks[0].position.y = real3DDisks[0].userData.originalY; // Bottom disk doesn't move
+    if (real3DDisks[1]) {
+      real3DDisks[1].position.y = real3DDisks[1].userData.originalY + (animationProgress * 0.5);
+    }
+    if (real3DDisks[2]) {
+      real3DDisks[2].position.y = real3DDisks[2].userData.originalY + (animationProgress * 1);
+    }
+  }
+
   paths.forEach((path) => {
     path.update();
     path.updatePositions();
@@ -780,35 +830,78 @@ function render() {
     }
   });
 
-  // REVEAL START
+  // SEQUENTIAL REVEAL START (at 10 seconds)
   const elapsedTime = Date.now() - startTime;
-  if (elapsedTime >= modelRevealDelay && !modelRevealStarted && real3DStatue) {
-    modelRevealStarted = true;
+  if (elapsedTime >= modelRevealDelay && !diskRevealStarted) {
+    diskRevealStarted = true;
+    console.log('Starting sequential reveal: bottom disk -> middle -> top -> statue');
 
+    // Apply textures to all disks and prepare them
+    real3DDisks.forEach((disk, index) => {
+      if (marbleTexture) {
+        disk.userData.material.map = marbleTexture;
+        disk.userData.material.color = new THREE.Color(0xcccccc);
+      }
+      if (marbleNormalMap) {
+        disk.userData.material.normalMap = marbleNormalMap;
+        disk.userData.material.normalScale = new THREE.Vector2(0.3, 0.3);
+      }
+      if (marbleAOMap) {
+        disk.userData.material.aoMap = marbleAOMap;
+        disk.userData.material.aoMapIntensity = 0.3;
+        disk.geometry.setAttribute('uv2', disk.geometry.attributes.uv);
+      }
+      if (marbleRoughnessMap) {
+        disk.userData.material.roughnessMap = marbleRoughnessMap;
+      }
+      disk.userData.material.needsUpdate = true;
+
+      // Create individual clipping plane for each disk
+      const diskClippingPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+      disk.userData.material.clippingPlanes = [diskClippingPlane];
+      disk.userData.clippingPlane = diskClippingPlane;
+      disk.userData.baseY = disk.userData.originalY - 0.25;  // Bottom of disk
+      disk.userData.topY = disk.userData.originalY + 0.25;   // Top of disk
+      diskClippingPlane.constant = disk.userData.baseY;  // Start from bottom
+      disk.visible = false;  // Initially hidden
+    });
+  }
+
+  // STATUE REVEAL START (will be triggered after all disks complete)
+  if (!modelRevealStarted && currentRevealingDisk >= 3 && real3DStatue) {
+    // Wait for last disk to complete
+    if (diskRevealProgress[2] >= 1) {
+      modelRevealStarted = true;
+      console.log('Starting statue reveal after all disks completed');
+    }
+  }
+
+  // Continue with statue reveal preparation if triggered
+  if (modelRevealStarted && real3DStatue && !real3DStatue.visible) {
     // Hover'u dondurma, devam etsin
     // targetProgress = animationProgress;
 
     // Apply all PBR textures
     if (marbleTexture) {
       real3DStatue.userData.material.map = marbleTexture;
-      real3DStatue.userData.material.color = new THREE.Color(0xffffff);
+      real3DStatue.userData.material.color = new THREE.Color(0xdddddd);  // Daha koyu beyaz
       console.log('Diffuse texture applied');
     } else {
-      real3DStatue.userData.material.color = new THREE.Color(0xe0e0e0);
+      real3DStatue.userData.material.color = new THREE.Color(0xc0c0c0);  // Daha koyu gri
       console.log('Using fallback color');
     }
 
     // Normal map for surface detail
     if (marbleNormalMap) {
       real3DStatue.userData.material.normalMap = marbleNormalMap;
-      real3DStatue.userData.material.normalScale = new THREE.Vector2(0.8, 0.8);
+      real3DStatue.userData.material.normalScale = new THREE.Vector2(0.3, 0.3);  // Azaltıldı
       console.log('Normal map applied to statue');
     }
 
     // Ambient Occlusion map for depth
     if (marbleAOMap) {
       real3DStatue.userData.material.aoMap = marbleAOMap;
-      real3DStatue.userData.material.aoMapIntensity = 0.6;
+      real3DStatue.userData.material.aoMapIntensity = 0.4;  // Azaltıldı
       // AO map requires second UV set
       real3DStatue.geometry.setAttribute('uv2', real3DStatue.geometry.attributes.uv);
       console.log('AO map applied to statue');
@@ -818,6 +911,7 @@ function render() {
     if (marbleRoughnessMap) {
       real3DStatue.userData.material.roughnessMap = marbleRoughnessMap;
       real3DStatue.userData.material.roughness = 1.0; // Let map control
+      real3DStatue.userData.material.envMapIntensity = 0.1;  // Minimum yansıma
       console.log('Roughness map applied to statue');
     }
 
@@ -844,7 +938,96 @@ function render() {
     modelClippingPlane.constant = real3DStatue.userData.clipMin;
   }
 
-  // REVEAL ANIMATION
+  // SEQUENTIAL DISK REVEAL ANIMATION
+  if (diskRevealStarted && currentRevealingDisk < 3) {
+    const diskIndex = currentRevealingDisk;
+    const disk = real3DDisks[diskIndex];
+
+    // Show current disk when starting its reveal
+    if (diskRevealProgress[diskIndex] === 0) {
+      disk.visible = true;
+    }
+
+    // Animate current disk (2 seconds per disk)
+    diskRevealProgress[diskIndex] = Math.min(1, diskRevealProgress[diskIndex] + 0.01);  // 2 secs @ 60fps
+
+    // Disk positions are already updated in main render loop
+
+    // Update clipping for current disk
+    if (disk.userData.clippingPlane) {
+      const clipY = disk.userData.baseY +
+                   (disk.userData.topY - disk.userData.baseY) * diskRevealProgress[diskIndex];
+      disk.userData.clippingPlane.constant = clipY;
+    }
+
+    // Update opacity for current disk
+    disk.userData.material.opacity = Math.min(1, diskRevealProgress[diskIndex] * 1.5);
+
+    // Hide paths for current disk progressively
+    paths.forEach(path => {
+      if (path.diskIndex === diskIndex) {
+        const cutoffProgress = diskRevealProgress[diskIndex];
+        const visibleVertices = [];
+
+        for (let i = 0; i < path.baseVertices.length; i += 3) {
+          let yOffset = 0;
+          if (path.diskIndex === 1) yOffset = animationProgress * 0.5;
+          else if (path.diskIndex === 2) yOffset = animationProgress * 1;
+
+          const localY = path.baseVertices[i + 1];
+          const diskRange = path.diskIndex === 0 ? [-1.75, -1.25] :
+                           path.diskIndex === 1 ? [-1.25, -0.75] : [-0.75, -0.25];
+          const cutoffY = diskRange[0] + (diskRange[1] - diskRange[0]) * cutoffProgress;
+
+          if (localY > cutoffY) {
+            visibleVertices.push(
+              path.baseVertices[i],
+              path.baseVertices[i + 1] + yOffset,
+              path.baseVertices[i + 2]
+            );
+          }
+        }
+
+        if (visibleVertices.length > 6) {
+          path.geometry.setAttribute(
+            "position",
+            new THREE.Float32BufferAttribute(visibleVertices, 3)
+          );
+          path.geometry.computeBoundingSphere();
+        } else {
+          path.line.visible = false;
+        }
+      }
+    });
+
+    // Hide wireframe for current disk
+    if (visibleDisks[diskIndex]) {
+      visibleDisks[diskIndex].material.opacity = Math.max(0, 0.2 * (1 - diskRevealProgress[diskIndex]));
+    }
+
+    // Complete current disk and move to next
+    if (diskRevealProgress[diskIndex] >= 1) {
+      disk.userData.material.clippingPlanes = [];
+      disk.userData.material.opacity = 1;
+
+      // Hide paths for completed disk
+      paths.forEach(path => {
+        if (path.diskIndex === diskIndex) {
+          path.line.visible = false;
+        }
+      });
+
+      // Hide wireframe
+      if (visibleDisks[diskIndex]) {
+        visibleDisks[diskIndex].visible = false;
+      }
+
+      currentRevealingDisk++;
+      console.log(`Disk ${diskIndex} complete, moving to next`);
+    }
+  }
+
+  // STATUE REVEAL ANIMATION
   if (modelRevealStarted && real3DStatue) {
     modelRevealProgress = Math.min(1, modelRevealProgress + 0.004);
 
