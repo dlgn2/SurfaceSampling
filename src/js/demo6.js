@@ -1,14 +1,13 @@
-import * as THREE from 'three';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler.js';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-// createDotTexture not needed without sparkles
+import * as THREE from "three";
+import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshSurfaceSampler } from "three/examples/jsm/math/MeshSurfaceSampler.js";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 
-const elContent = document.querySelector('.content');
+const elContent = document.querySelector(".content");
 const pixelRatio = 2;
 
 const scene = new THREE.Scene();
@@ -21,12 +20,13 @@ const camera = new THREE.PerspectiveCamera(
 camera.position.set(0, 0, 10);
 camera.lookAt(0, -1, 0);
 
-const renderer = new THREE.WebGLRenderer();
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(pixelRatio);
 renderer.setSize(elContent.offsetWidth, elContent.offsetHeight);
+renderer.localClippingEnabled = true; // clipping için gerekli
 elContent.appendChild(renderer.domElement);
 
-// Add OrbitControls
+// Controls
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
@@ -35,9 +35,8 @@ controls.minDistance = 5;
 controls.maxDistance = 100;
 controls.maxPolarAngle = Math.PI;
 
-// Post-processing setup
+// Post-processing
 const renderScene = new RenderPass(scene, camera);
-
 const bloomPass = new UnrealBloomPass(
   new THREE.Vector2(elContent.offsetWidth, elContent.offsetHeight),
   0.8,
@@ -55,18 +54,23 @@ composer.addPass(bloomPass);
 const group = new THREE.Group();
 scene.add(group);
 
-// Hover animation variables
-let isHovering = false;
+// Hover animasyonu
 let animationProgress = 0;
 let targetProgress = 0;
 const animationSpeed = 0.05;
-let raycaster = new THREE.Raycaster();
-let mouse = new THREE.Vector2();
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
 
-// Disk variables
+// Reveal state
+let modelRevealStarted = false;
+let modelRevealProgress = 0;
+const modelRevealDelay = 10000; // 10s
+let startTime = null;
+let real3DStatue = null;
+let marbleTexture = null;
+
+// Disks & paths
 let visibleDisks = [];
-let diskMeshes = [];
-let samplers = [];
 let sampler = null;
 let statueSampler = null;
 let statueMeshRef = null;
@@ -74,27 +78,50 @@ let paths = [];
 let statuePaths = [];
 
 const tempPosition = new THREE.Vector3();
+
 const diskMaterials = [
-  new THREE.LineBasicMaterial({color: 0x125D98, transparent: true, opacity: 0.5, linewidth: 2}),
-  new THREE.LineBasicMaterial({color: 0xCFD6DE, transparent: true, opacity: 0.5, linewidth: 2}),
-  new THREE.LineBasicMaterial({color: 0x4169E1, transparent: true, opacity: 0.5, linewidth: 2}),
-  new THREE.LineBasicMaterial({color: 0x0000CD, transparent: true, opacity: 0.5, linewidth: 2})
+  new THREE.LineBasicMaterial({
+    color: 0x125d98,
+    transparent: true,
+    opacity: 0.5,
+  }),
+  new THREE.LineBasicMaterial({
+    color: 0xcfd6de,
+    transparent: true,
+    opacity: 0.5,
+  }),
+  new THREE.LineBasicMaterial({
+    color: 0x4169e1,
+    transparent: true,
+    opacity: 0.5,
+  }),
+  new THREE.LineBasicMaterial({
+    color: 0x0000cd,
+    transparent: true,
+    opacity: 0.5,
+  }),
 ];
 
 const statueMaterials = [
-  new THREE.LineBasicMaterial({color: 0xFFD700, transparent: true, opacity: 0.6, linewidth: 2}),
-  new THREE.LineBasicMaterial({color: 0xFFA500, transparent: true, opacity: 0.6, linewidth: 2})
+  new THREE.LineBasicMaterial({
+    color: 0xffd700,
+    transparent: true,
+    opacity: 0.6,
+  }),
+  new THREE.LineBasicMaterial({
+    color: 0xffa500,
+    transparent: true,
+    opacity: 0.6,
+  }),
 ];
 
-// Sparkles removed - only lines for demo6
-
-// Galaxy background colors only
-let galaxyColors = [
+// Galaxy
+const galaxyColors = [
   new THREE.Color("#f9fbf2"),
   new THREE.Color("#ffede1"),
   new THREE.Color("#05c7f2"),
   new THREE.Color("#0597f2"),
-  new THREE.Color("#0476d9")
+  new THREE.Color("#0476d9"),
 ];
 
 class Star {
@@ -103,11 +130,9 @@ class Star {
     this.phi = Math.random() * Math.PI * 2;
     this.theta = Math.random() * Math.PI;
     this.v = new THREE.Vector2().random().subScalar(0.5).multiplyScalar(0.0007);
-
     this.x = this.r * Math.sin(this.phi) * Math.sin(this.theta);
     this.y = this.r * Math.cos(this.phi);
     this.z = this.r * Math.sin(this.phi) * Math.cos(this.theta);
-
     this.size = Math.random() * 4 + 2 * pixelRatio;
     this.color = color;
   }
@@ -120,12 +145,11 @@ class Star {
   }
 }
 
-// Create galaxy background
+// Galaxy points
 const stars = [];
 const galaxyGeometryVertices = [];
 const galaxyGeometryColors = [];
 const galaxyGeometrySizes = [];
-
 for (let i = 0; i < 1500; i++) {
   const star = new Star();
   star.setup(galaxyColors[Math.floor(Math.random() * galaxyColors.length)]);
@@ -134,7 +158,6 @@ for (let i = 0; i < 1500; i++) {
   galaxyGeometrySizes.push(star.size);
   stars.push(star);
 }
-
 const starsGeometry = new THREE.BufferGeometry();
 starsGeometry.setAttribute(
   "position",
@@ -148,13 +171,12 @@ starsGeometry.setAttribute(
   "color",
   new THREE.Float32BufferAttribute(galaxyGeometryColors, 3)
 );
-// Create material for stars
 const starsMaterial = new THREE.PointsMaterial({
   size: 2,
-  color: 0xffffff,
+  vertexColors: true,
   transparent: true,
   opacity: 0.8,
-  sizeAttenuation: false
+  sizeAttenuation: false,
 });
 const galaxyPoints = new THREE.Points(starsGeometry, starsMaterial);
 scene.add(galaxyPoints);
@@ -162,15 +184,15 @@ scene.add(galaxyPoints);
 class Path {
   constructor(index, isStatue = false) {
     this.geometry = new THREE.BufferGeometry();
-    this.material = isStatue ? statueMaterials[index % 2] : diskMaterials[index % 4];
+    this.material = isStatue
+      ? statueMaterials[index % 2]
+      : diskMaterials[index % 4];
     this.line = new THREE.Line(this.geometry, this.material);
     this.vertices = [];
-    this.baseVertices = []; // Store base positions without offset
+    this.baseVertices = []; // HER ZAMAN heykelin LOCAL uzayında tutulur
     this.isStatue = isStatue;
-
-    // Clear disk assignment
     this.diskIndex = -1;
-    this.forceDiskIndex = undefined; // Will be set after creation if needed
+    this.forceDiskIndex = undefined;
 
     const currentSampler = isStatue ? statueSampler : sampler;
     if (currentSampler) {
@@ -183,55 +205,58 @@ class Path {
     const currentSampler = this.isStatue ? statueSampler : sampler;
     if (!currentSampler) return;
 
-    // Only add new points if we haven't reached the limit
-    if (this.baseVertices.length < 10000) {
-      const pointsPerUpdate = this.isStatue ? 15 : 50; // Çok daha hızlı dolum
+    if (this.baseVertices.length < (this.isStatue ? 15000 : 20000)) {
+      const pointsPerUpdate = this.isStatue ? 15 : 50;
 
       for (let j = 0; j < pointsPerUpdate; j++) {
         let pointFound = false;
         let attempts = 0;
-        while (!pointFound && attempts < 50) { // Daha fazla deneme
+        while (!pointFound && attempts < 50) {
           attempts++;
-          currentSampler.sample(tempPosition);
+          currentSampler.sample(tempPosition); // statue için: LOCAL koordinat
 
-          // If we have a forced disk index, only accept points from that disk
           if (!this.isStatue && this.forceDiskIndex !== undefined) {
             const yPos = tempPosition.y;
             let validForDisk = false;
-
-            if (this.forceDiskIndex === 0 && yPos >= -1.75 && yPos <= -1.25) {
-              validForDisk = true; // Bottom disk range
-            } else if (this.forceDiskIndex === 1 && yPos >= -1.25 && yPos <= -0.75) {
-              validForDisk = true; // Middle disk range
-            } else if (this.forceDiskIndex === 2 && yPos >= -0.75 && yPos <= -0.25) {
-              validForDisk = true; // Top disk range
-            }
-
-            if (!validForDisk) continue; // Skip this point, sample another
+            if (this.forceDiskIndex === 0 && yPos >= -1.75 && yPos <= -1.25)
+              validForDisk = true;
+            else if (
+              this.forceDiskIndex === 1 &&
+              yPos >= -1.25 &&
+              yPos <= -0.75
+            )
+              validForDisk = true;
+            else if (
+              this.forceDiskIndex === 2 &&
+              yPos >= -0.75 &&
+              yPos <= -0.25
+            )
+              validForDisk = true;
+            if (!validForDisk) continue;
           }
 
-          // Daha büyük mesafe ile daha hızlı dolum
-          const maxDistance = this.isStatue ? 0.3 : 0.4; // Daha büyük çizgiler
+          const maxDistance = this.isStatue ? 0.3 : 0.4;
+          if (!this.previousPoint) this.previousPoint = tempPosition.clone();
+
           if (tempPosition.distanceTo(this.previousPoint) < maxDistance) {
-            // Store base position without offset
-            this.baseVertices.push(tempPosition.x, tempPosition.y, tempPosition.z);
+            // LOCAL koordinatı sakla
+            this.baseVertices.push(
+              tempPosition.x,
+              tempPosition.y,
+              tempPosition.z
+            );
             this.previousPoint = tempPosition.clone();
 
-            // Set disk index if forced
             if (!this.isStatue && this.forceDiskIndex !== undefined) {
               this.diskIndex = this.forceDiskIndex;
             } else if (!this.isStatue && this.diskIndex === -1) {
-              // Auto-detect disk if not set yet
-              if (tempPosition.y >= -1.75 && tempPosition.y <= -1.25) {
-                this.diskIndex = 0; // Bottom disk
-              } else if (tempPosition.y >= -1.25 && tempPosition.y <= -0.75) {
-                this.diskIndex = 1; // Middle disk
-              } else if (tempPosition.y >= -0.75 && tempPosition.y <= -0.25) {
-                this.diskIndex = 2; // Top disk
-              }
+              if (tempPosition.y >= -1.75 && tempPosition.y <= -1.25)
+                this.diskIndex = 0;
+              else if (tempPosition.y >= -1.25 && tempPosition.y <= -0.75)
+                this.diskIndex = 1;
+              else if (tempPosition.y >= -0.75 && tempPosition.y <= -0.25)
+                this.diskIndex = 2;
             }
-
-            // No sparkles - only lines
             pointFound = true;
           }
         }
@@ -240,86 +265,85 @@ class Path {
   }
 
   updatePositions() {
-    // Apply animation offset to all vertices - this runs every frame
     if (this.baseVertices.length === 0) return;
 
     this.vertices = [];
+
     for (let i = 0; i < this.baseVertices.length; i += 3) {
-      let yOffset = 0;
-
       if (this.isStatue) {
-        yOffset = animationProgress * 1; // Follow top disk
-      } else if (this.diskIndex === 0) {
-        yOffset = 0; // Bottom disk doesn't move
-      } else if (this.diskIndex === 1) {
-        yOffset = animationProgress * 0.5; // Middle disk moves up 0.5
-      } else if (this.diskIndex === 2) {
-        yOffset = animationProgress * 1; // Top disk moves up 1.0
-      }
+        // LOCAL → WORLD: real3DStatue.position ekle
+        const px =
+          this.baseVertices[i] + (statueMeshRef ? statueMeshRef.position.x : 0);
+        const py =
+          this.baseVertices[i + 1] +
+          (statueMeshRef ? statueMeshRef.position.y : 0);
+        const pz =
+          this.baseVertices[i + 2] +
+          (statueMeshRef ? statueMeshRef.position.z : 0);
+        this.vertices.push(px, py, pz);
+      } else {
+        // Disk katmanları hover offset
+        let yOffset = 0;
+        if (this.diskIndex === 1) yOffset = animationProgress * 0.5;
+        else if (this.diskIndex === 2) yOffset = animationProgress * 1;
 
-      this.vertices.push(
-        this.baseVertices[i],
-        this.baseVertices[i + 1] + yOffset,
-        this.baseVertices[i + 2]
-      );
+        this.vertices.push(
+          this.baseVertices[i],
+          this.baseVertices[i + 1] + yOffset,
+          this.baseVertices[i + 2]
+        );
+      }
     }
 
     if (this.vertices.length > 0) {
-      this.geometry.setAttribute("position", new THREE.Float32BufferAttribute(this.vertices, 3));
+      this.geometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(this.vertices, 3)
+      );
       this.geometry.computeBoundingSphere();
     }
   }
 }
 
-// Sparkles removed - no update function needed
-
 function updateDiskPositions() {
-  // Smooth animation transition
   animationProgress += (targetProgress - animationProgress) * animationSpeed;
 
-  // Bottom disk stays at -1.5 (no movement)
-  // visibleDisks[0] doesn't move
-
-  // Update middle disk from -1.0 to -0.5 (moves up 0.5)
   if (visibleDisks[1]) {
-    const middleY = -1 + (animationProgress * 0.5);
+    const middleY = -1 + animationProgress * 0.5;
     visibleDisks[1].position.y = middleY;
   }
-
-  // Update top disk from -0.5 to 0.5 (moves up 1.0)
   if (visibleDisks[2]) {
-    const topY = -0.5 + (animationProgress * 1);
+    const topY = -0.5 + animationProgress * 1;
     visibleDisks[2].position.y = topY;
 
-    // Update statue position to follow top disk
-    if (statueMeshRef) {
-      statueMeshRef.position.y = topY + 0.25;
+    // Heykeli disklerle birlikte kaldır
+    if (statueMeshRef && !modelRevealStarted) {
+      statueMeshRef.position.y = -0.25 + animationProgress * 1;
+    }
+    if (real3DStatue && !modelRevealStarted) {
+      real3DStatue.position.y = -0.25 + animationProgress * 1;
     }
   }
 }
 
-// Create disks with hover animation capability
 function createDisks() {
-  // Clear any existing visible disks
-  visibleDisks.forEach(disk => {
+  // temizle
+  visibleDisks.forEach((disk) => {
     group.remove(disk);
     disk.geometry.dispose();
     disk.material.dispose();
   });
   visibleDisks = [];
-  diskMeshes = [];
-  samplers = [];
+  paths = [];
 
-  // Disk configurations (matching demo5)
   const diskConfigs = [
-    { radius: 3, height: 0.5, y: -1.5 },    // Bottom disk
-    { radius: 2.5, height: 0.5, y: -1 },    // Middle disk
-    { radius: 2, height: 0.5, y: -0.5 }     // Top disk
+    { radius: 3, height: 0.5, y: -1.5 },
+    { radius: 2.5, height: 0.5, y: -1 },
+    { radius: 2, height: 0.5, y: -0.5 },
   ];
 
   const geometries = [];
-
-  diskConfigs.forEach((config, index) => {
+  diskConfigs.forEach((config) => {
     const diskGeometry = new THREE.CylinderGeometry(
       config.radius,
       config.radius,
@@ -331,18 +355,19 @@ function createDisks() {
     diskGeometry.translate(0, config.y, 0);
     geometries.push(diskGeometry);
 
-    // Create visible disk mesh
     const visibleMaterial = new THREE.MeshBasicMaterial({
       color: 0x444444,
       wireframe: true,
       transparent: true,
-      opacity: 0.2
+      opacity: 0.2,
     });
     const visibleDiskGeometry = new THREE.CylinderGeometry(
       config.radius,
       config.radius,
       config.height,
-      32, 1, false
+      32,
+      1,
+      false
     );
     const visibleDisk = new THREE.Mesh(visibleDiskGeometry, visibleMaterial);
     visibleDisk.position.y = config.y;
@@ -350,14 +375,14 @@ function createDisks() {
     visibleDisks.push(visibleDisk);
   });
 
-  // Merge all disk geometries for sampling
+  // tekleştir (sampler için görünmeyen kafes)
   const mergedGeometry = new THREE.BufferGeometry();
   const positions = [];
   const normals = [];
   const indices = [];
   let vertexOffset = 0;
 
-  geometries.forEach(geo => {
+  geometries.forEach((geo) => {
     const pos = geo.attributes.position;
     const norm = geo.attributes.normal;
     const index = geo.index;
@@ -366,78 +391,62 @@ function createDisks() {
       positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
       normals.push(norm.getX(i), norm.getY(i), norm.getZ(i));
     }
-
     for (let i = 0; i < index.count; i++) {
       indices.push(index.getX(i) + vertexOffset);
     }
-
     vertexOffset += pos.count;
   });
 
-  mergedGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  mergedGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  mergedGeometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(positions, 3)
+  );
+  mergedGeometry.setAttribute(
+    "normal",
+    new THREE.Float32BufferAttribute(normals, 3)
+  );
   mergedGeometry.setIndex(indices);
 
-  // Create invisible mesh for sampling
   const material = new THREE.MeshBasicMaterial({
     color: 0x333333,
     wireframe: true,
-    visible: false
+    visible: false,
   });
   const diskMesh = new THREE.Mesh(mergedGeometry, material);
   scene.add(diskMesh);
 
-  // Create sampler
   sampler = new MeshSurfaceSampler(diskMesh).build();
 
-  // Create paths for disk sampling - her disk için eşit dağıtılmış path'ler
   for (let i = 0; i < 24; i++) {
-    const path = new Path(i);
-    // Force disk assignment based on index for better distribution
-    if (i < 8) path.forceDiskIndex = 0;      // First 8 paths -> bottom disk
-    else if (i < 16) path.forceDiskIndex = 1; // Next 8 paths -> middle disk
-    else path.forceDiskIndex = 2;             // Last 8 paths -> top disk
+    const path = new Path(i, false);
+    if (i < 8) path.forceDiskIndex = 0;
+    else if (i < 16) path.forceDiskIndex = 1;
+    else path.forceDiskIndex = 2;
     paths.push(path);
     group.add(path.line);
   }
 }
 
-// Create statue - supports both OBJ and GLB formats
 function createStatue() {
-  // Check if GLB file exists first, fallback to OBJ
   const gltfLoader = new GLTFLoader();
 
-  // Load Prometheus GLB
   gltfLoader.load(
-    '/prometheus_0.1.glb',
+    "./prometheus_0.1.glb",
     (gltf) => {
-      console.log('Prometheus GLB loaded successfully');
-      // Hide original model if it has meshes
       gltf.scene.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.visible = false;
-        }
+        if (child instanceof THREE.Mesh) child.visible = false;
       });
-      processStatueModel(gltf.scene, 1.5); // Daha küçük scale
+      processStatueModel(gltf.scene, 1.5);
     },
-    (xhr) => {
-      console.log((xhr.loaded / xhr.total * 100) + '% loaded');
-    },
-    (error) => {
-      console.log('Prometheus GLB not found, trying David.obj as fallback...');
-      // Fallback to OBJ
+    undefined,
+    () => {
       const objLoader = new OBJLoader();
       objLoader.load(
-        '/David.obj',
-        (obj) => {
-          console.log('David OBJ loaded as fallback');
-          processStatueModel(obj, 4);
-        },
-        (xhr) => {
-          console.log((xhr.loaded / xhr.total * 100) + '% loaded');
-        },
+        "./David.obj",
+        (obj) => processStatueModel(obj, 4),
+        undefined,
         (error) => {
-          console.error('Error loading statue:', error);
+          console.error("Error loading statue:", error);
           createFallbackStatue();
         }
       );
@@ -446,187 +455,369 @@ function createStatue() {
 }
 
 function processStatueModel(model, scale) {
-  // Apply scale
   model.scale.set(scale, scale, scale);
   model.updateMatrixWorld(true);
 
-  // Collect all meshes
+  // Texture
+  const textureLoader = new THREE.TextureLoader();
+  textureLoader.load(
+    "./textures/marble.jpg",
+    (texture) => {
+      marbleTexture = texture;
+      marbleTexture.wrapS = THREE.RepeatWrapping;
+      marbleTexture.wrapT = THREE.RepeatWrapping;
+      marbleTexture.repeat.set(2, 2);
+    },
+    undefined,
+    () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1024;
+      canvas.height = 1024;
+      const ctx = canvas.getContext("2d");
+      const gradient = ctx.createLinearGradient(0, 0, 1024, 1024);
+      gradient.addColorStop(0, "#FAFAFA");
+      gradient.addColorStop(0.5, "#F0F0F0");
+      gradient.addColorStop(1, "#E8E8E8");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 1024, 1024);
+      ctx.globalAlpha = 0.3;
+      for (let i = 0; i < 30; i++) {
+        ctx.strokeStyle = i % 3 === 0 ? "#D0D0D0" : "#C8C8C8";
+        ctx.lineWidth = Math.random() * 3 + 1;
+        ctx.beginPath();
+        ctx.moveTo(Math.random() * 1024, 0);
+        ctx.bezierCurveTo(
+          Math.random() * 1024,
+          Math.random() * 1024,
+          Math.random() * 1024,
+          Math.random() * 1024,
+          Math.random() * 1024,
+          1024
+        );
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1.0;
+      marbleTexture = new THREE.CanvasTexture(canvas);
+      marbleTexture.wrapS = THREE.RepeatWrapping;
+      marbleTexture.wrapT = THREE.RepeatWrapping;
+    }
+  );
+
+  // Merge to single geometry in WORLD space
   const meshes = [];
   model.traverse((child) => {
-    if (child instanceof THREE.Mesh) {
-      meshes.push(child);
-    }
+    if (child instanceof THREE.Mesh) meshes.push(child);
   });
+  if (meshes.length === 0) return createFallbackStatue();
 
-  if (meshes.length === 0) {
-    console.error('No meshes found in model');
-    createFallbackStatue();
-    return;
-  }
-
-  // Merge all geometries for sampling
   const mergedGeometry = new THREE.BufferGeometry();
   const positions = [];
   const normals = [];
   const indices = [];
   let vertexOffset = 0;
 
-  meshes.forEach(mesh => {
+  const tempPos = new THREE.Vector3();
+  const tempNorm = new THREE.Vector3();
+
+  meshes.forEach((mesh) => {
     const geo = mesh.geometry;
     const pos = geo.attributes.position;
-    const norm = geo.attributes.normal || { getX: () => 0, getY: () => 1, getZ: () => 0 };
+    const norm = geo.attributes.normal || {
+      getX: () => 0,
+      getY: () => 1,
+      getZ: () => 0,
+    };
     const index = geo.index;
 
-    const tempPos = new THREE.Vector3();
-    const tempNorm = new THREE.Vector3();
-
     for (let i = 0; i < pos.count; i++) {
-      tempPos.set(pos.getX(i), pos.getY(i), pos.getZ(i));
-      tempPos.applyMatrix4(mesh.matrixWorld);
+      tempPos
+        .set(pos.getX(i), pos.getY(i), pos.getZ(i))
+        .applyMatrix4(mesh.matrixWorld);
       positions.push(tempPos.x, tempPos.y, tempPos.z);
 
-      if (norm.getX) {
-        tempNorm.set(norm.getX(i), norm.getY(i), norm.getZ(i));
-      } else {
-        tempNorm.set(0, 1, 0);
-      }
+      if (norm.getX) tempNorm.set(norm.getX(i), norm.getY(i), norm.getZ(i));
+      else tempNorm.set(0, 1, 0);
       tempNorm.transformDirection(mesh.matrixWorld).normalize();
       normals.push(tempNorm.x, tempNorm.y, tempNorm.z);
     }
 
     if (index) {
-      for (let i = 0; i < index.count; i++) {
+      for (let i = 0; i < index.count; i++)
         indices.push(index.getX(i) + vertexOffset);
-      }
     } else {
-      for (let i = 0; i < pos.count; i += 3) {
-        indices.push(i + vertexOffset, i + 1 + vertexOffset, i + 2 + vertexOffset);
-      }
+      for (let i = 0; i < pos.count; i += 3)
+        indices.push(
+          i + vertexOffset,
+          i + 1 + vertexOffset,
+          i + 2 + vertexOffset
+        );
     }
     vertexOffset += pos.count;
   });
 
-  mergedGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  mergedGeometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  mergedGeometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(positions, 3)
+  );
+  mergedGeometry.setAttribute(
+    "normal",
+    new THREE.Float32BufferAttribute(normals, 3)
+  );
   mergedGeometry.setIndex(indices);
-
-  // Calculate bounding box
   mergedGeometry.computeBoundingBox();
+
   const box = mergedGeometry.boundingBox;
   const center = box.getCenter(new THREE.Vector3());
 
-  // Create visible statue mesh (hide it - we only want the lines)
+  // Material
   const statueMaterial = new THREE.MeshPhongMaterial({
-    color: 0xFF0000,
-    wireframe: true,
-    transparent: false,
-    opacity: 1.0
+    color: 0xdddddd,
+    map: null,
+    emissive: 0x000000,
+    specular: 0x111111,
+    shininess: 10,
+    transparent: true,
+    opacity: 0,
+    side: THREE.DoubleSide,
   });
 
-  const statueMesh = new THREE.Mesh(mergedGeometry, statueMaterial);
-  const boxCenter = box.getCenter(new THREE.Vector3());
-  statueMesh.position.set(
-    -boxCenter.x,
-    -0.5,
-    -boxCenter.z
-  );
-  statueMesh.visible = false; // Hide the wireframe mesh
-  scene.add(statueMesh);
-  statueMeshRef = statueMesh;
+  // Lights
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+  scene.add(ambientLight);
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+  directionalLight.position.set(5, 10, 5);
+  scene.add(directionalLight);
+  const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
+  directionalLight2.position.set(-5, 5, -5);
+  scene.add(directionalLight2);
 
-  // Create sampler mesh
+  // White statue mesh (center to origin)
+  real3DStatue = new THREE.Mesh(mergedGeometry, statueMaterial);
+  real3DStatue.position.set(-center.x, -0.25, -center.z);
+  real3DStatue.visible = false;
+  real3DStatue.renderOrder = 0;
+  scene.add(real3DStatue);
+
+  real3DStatue.userData.material = statueMaterial;
+  real3DStatue.userData.boundingBox = box;
+  real3DStatue.userData.center = center;
+  statueMeshRef = real3DStatue;
+
+  // Sampler for statue (LOCAL uzayda çalışır; world offset’i biz ekleyeceğiz)
   const samplerMesh = new THREE.Mesh(mergedGeometry.clone());
-  samplerMesh.position.set(
-    -boxCenter.x,
-    -0.5,
-    -boxCenter.z
-  );
+  samplerMesh.position.copy(real3DStatue.position);
   statueSampler = new MeshSurfaceSampler(samplerMesh).build();
 
-  // Create paths for statue sampling
-  for (let i = 0; i < 12; i++) { // 12 path yeterli
+  // Yellow line paths
+  statuePaths = [];
+  for (let i = 0; i < 12; i++) {
     const path = new Path(i, true);
+    // depthTest = true kalsın; hizalamayı gözle doğru görürüz
     statuePaths.push(path);
-    group.add(path.line); // Add to group instead of scene
+    group.add(path.line);
   }
-
-  console.log('Statue sampler created!');
 }
 
 function createFallbackStatue() {
-  console.log('Creating fallback statue...');
+  const fallbackGeometry = new THREE.ConeGeometry(1.2, 3.5, 8);
+  fallbackGeometry.computeBoundingBox();
 
-  const fallbackGeometry = new THREE.BoxGeometry(5, 15, 5);
-  const fallbackMaterial = new THREE.MeshBasicMaterial({
-    color: 0xFF0000,
-    wireframe: true
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext("2d");
+  const gradient = ctx.createRadialGradient(256, 256, 0, 256, 256, 350);
+  gradient.addColorStop(0, "#FEFEFE");
+  gradient.addColorStop(0.5, "#F0F0F0");
+  gradient.addColorStop(1, "#E0E0E0");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 512, 512);
+  marbleTexture = new THREE.CanvasTexture(canvas);
+
+  const fallbackMaterial = new THREE.MeshPhongMaterial({
+    color: 0xffffff,
+    map: marbleTexture,
+    emissive: 0x101010,
+    specular: 0x222222,
+    shininess: 100,
+    transparent: true,
+    opacity: 0,
+    side: THREE.DoubleSide,
   });
-  const fallbackStatue = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
-  fallbackStatue.position.set(0, -0.5, 0);
-  scene.add(fallbackStatue);
-  statueMeshRef = fallbackStatue;
+
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+  scene.add(ambientLight);
+
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+  directionalLight.position.set(5, 10, 5);
+  scene.add(directionalLight);
+
+  real3DStatue = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
+  real3DStatue.position.set(0, -0.5, 0);
+  real3DStatue.visible = false;
+  real3DStatue.renderOrder = 0;
+  scene.add(real3DStatue);
+
+  real3DStatue.userData.material = fallbackMaterial;
+  real3DStatue.userData.boundingBox = fallbackGeometry.boundingBox;
+  statueMeshRef = real3DStatue;
+
+  const samplerMesh = new THREE.Mesh(fallbackGeometry.clone());
+  samplerMesh.position.copy(real3DStatue.position);
+  statueSampler = new MeshSurfaceSampler(samplerMesh).build();
+
+  statuePaths = [];
+  for (let i = 0; i < 12; i++) {
+    const path = new Path(i, true);
+    statuePaths.push(path);
+    group.add(path.line);
+  }
 }
 
-// Mouse event handler for hover effect
 function onMouseMove(event) {
   mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
   raycaster.setFromCamera(mouse, camera);
-
-  // Check intersections with visible disks
   const intersects = raycaster.intersectObjects(visibleDisks);
-
-  if (intersects.length > 0) {
-    isHovering = true;
-    targetProgress = 1; // Animate to expanded position
-  } else {
-    isHovering = false;
-    targetProgress = 0; // Animate back to original position
-  }
+  targetProgress = intersects.length > 0 ? 1 : 0;
 }
+window.addEventListener("mousemove", onMouseMove, false);
 
-window.addEventListener('mousemove', onMouseMove, false);
-
-function render(a) {
+function render() {
   controls.update();
 
-  // Update disk animation
+  if (!startTime) startTime = Date.now();
+
   updateDiskPositions();
 
-  // Update disk paths - hızlı dolum
-  paths.forEach(path => {
-    if (path.baseVertices.length < 20000) { // Makul bir limit
-      path.update();
-    }
-    // Her frame'de pozisyonları güncelle - hover animasyonu için kritik
+  paths.forEach((path) => {
+    path.update();
     path.updatePositions();
   });
 
-  // Update statue paths - disklerle birlikte başlayabilir
-  statuePaths.forEach(path => {
-    if (path.baseVertices.length < 15000) {
+  statuePaths.forEach((path) => {
+    if (!modelRevealStarted) {
       path.update();
+      path.updatePositions();
     }
-    // Her frame'de pozisyonları güncelle - hover animasyonu için kritik
-    path.updatePositions();
   });
 
-  // No sparkles to update - only lines
+  // REVEAL START
+  const elapsedTime = Date.now() - startTime;
+  if (elapsedTime >= modelRevealDelay && !modelRevealStarted && real3DStatue) {
+    modelRevealStarted = true;
 
-  // Update stars
-  let tempStarsArray = [];
+    // Hover'u mevcut değerde dondur (artık oynamayacak)
+    targetProgress = animationProgress;
+
+    // White statue material & texture
+    if (marbleTexture) {
+      real3DStatue.userData.material.map = marbleTexture;
+      real3DStatue.userData.material.color = new THREE.Color(0xffffff);
+    } else {
+      real3DStatue.userData.material.color = new THREE.Color(0xe0e0e0);
+    }
+    real3DStatue.userData.material.needsUpdate = true;
+    real3DStatue.visible = true;
+    real3DStatue.userData.material.opacity = 0;
+
+    // CLIPPING SETUP – alttan üste doğru GÖSTER
+    const modelClippingPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+    real3DStatue.userData.material.clippingPlanes = [modelClippingPlane];
+    real3DStatue.userData.clippingPlane = modelClippingPlane;
+
+    const box = real3DStatue.userData.boundingBox;
+    const worldY = real3DStatue.position.y;
+
+    real3DStatue.userData.clipMin = worldY + box.min.y;
+    real3DStatue.userData.clipMax = worldY + box.max.y;
+
+    // Sarı çizgiler aynı dünya sınırlarını kullanacak
+    real3DStatue.userData.yellowMin = real3DStatue.userData.clipMin;
+    real3DStatue.userData.yellowMax = real3DStatue.userData.clipMax;
+
+    // Başlangıç: alttan
+    modelClippingPlane.constant = real3DStatue.userData.clipMin;
+  }
+
+  // REVEAL ANIMATION
+  if (modelRevealStarted && real3DStatue) {
+    modelRevealProgress = Math.min(1, modelRevealProgress + 0.004);
+
+    // White statue – clipping'i alttan üste ilerlet
+    if (real3DStatue.userData.clippingPlane) {
+      const currentClipY =
+        real3DStatue.userData.clipMin +
+        (real3DStatue.userData.clipMax - real3DStatue.userData.clipMin) *
+          modelRevealProgress;
+
+      // n=(0,-1,0) → y > constant kesilir, y <= constant görünür
+      real3DStatue.userData.clippingPlane.constant = currentClipY;
+    }
+    real3DStatue.userData.material.opacity = Math.min(1, modelRevealProgress);
+
+    // Yellow lines – dünya koordinatında kes (aşağıdan yukarı kaybol)
+    const cutoffY =
+      real3DStatue.userData.yellowMin +
+      (real3DStatue.userData.yellowMax - real3DStatue.userData.yellowMin) *
+        modelRevealProgress;
+
+    statuePaths.forEach((path) => {
+      // WORLD koordinat hesapla ve cutoff üstünü göster
+      const visibleVertices = [];
+      const sx = statueMeshRef ? statueMeshRef.position.x : 0;
+      const sy = statueMeshRef ? statueMeshRef.position.y : 0;
+      const sz = statueMeshRef ? statueMeshRef.position.z : 0;
+
+      for (let i = 0; i < path.baseVertices.length; i += 3) {
+        const vx = path.baseVertices[i] + sx;
+        const vy = path.baseVertices[i + 1] + sy;
+        const vz = path.baseVertices[i + 2] + sz;
+
+        if (vy > cutoffY) {
+          visibleVertices.push(vx, vy, vz);
+        }
+      }
+
+      if (visibleVertices.length > 6) {
+        path.geometry.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(visibleVertices, 3)
+        );
+        path.geometry.computeBoundingSphere();
+        path.line.visible = true;
+        path.material.opacity = 0.6;
+      } else {
+        path.line.visible = false;
+      }
+    });
+
+    if (modelRevealProgress >= 1) {
+      real3DStatue.userData.material.clippingPlanes = [];
+      real3DStatue.userData.material.opacity = 1;
+      statuePaths.forEach((path) => {
+        path.line.visible = false;
+        if (path.geometry) path.geometry.dispose();
+      });
+    }
+  }
+
+  // Galaxy animate
+  const tempStarsArray = [];
   stars.forEach((s) => {
     s.update();
     tempStarsArray.push(s.x, s.y, s.z);
   });
-  starsGeometry.setAttribute("position", new THREE.Float32BufferAttribute(tempStarsArray, 3));
+  starsGeometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(tempStarsArray, 3)
+  );
 
   composer.render();
 }
 
 window.addEventListener("resize", onWindowResize, false);
-
 function onWindowResize() {
   camera.aspect = elContent.offsetWidth / elContent.offsetHeight;
   camera.updateProjectionMatrix();
@@ -635,13 +826,9 @@ function onWindowResize() {
   bloomPass.setSize(elContent.offsetWidth, elContent.offsetHeight);
 }
 
-// Initialize
+// Init
 createDisks();
-
-// Load statue after 2 seconds
 setTimeout(() => {
   createStatue();
 }, 2000);
-
-// Start render loop
 renderer.setAnimationLoop(render);
