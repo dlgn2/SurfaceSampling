@@ -24,6 +24,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(pixelRatio);
 renderer.setSize(elContent.offsetWidth, elContent.offsetHeight);
 renderer.localClippingEnabled = true; // clipping için gerekli
+renderer.outputColorSpace = THREE.SRGBColorSpace; // Doğru renk uzayı
 elContent.appendChild(renderer.domElement);
 
 // Controls
@@ -68,6 +69,9 @@ const modelRevealDelay = 10000; // 10s
 let startTime = null;
 let real3DStatue = null;
 let marbleTexture = null;
+let marbleNormalMap = null;
+let marbleAOMap = null;
+let marbleRoughnessMap = null;
 
 // Disks & paths
 let visibleDisks = [];
@@ -458,15 +462,19 @@ function processStatueModel(model, scale) {
   model.scale.set(scale, scale, scale);
   model.updateMatrixWorld(true);
 
-  // Texture
+  // Load PBR textures from Polyhaven (Painted Plaster Wall)
   const textureLoader = new THREE.TextureLoader();
+
+  // 1. Diffuse/Color map
   textureLoader.load(
-    "./textures/marble.jpg",
+    "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/painted_plaster_wall/painted_plaster_wall_diff_4k.png",
     (texture) => {
       marbleTexture = texture;
+      marbleTexture.colorSpace = THREE.SRGBColorSpace; // sRGB renk uzayı
       marbleTexture.wrapS = THREE.RepeatWrapping;
       marbleTexture.wrapT = THREE.RepeatWrapping;
-      marbleTexture.repeat.set(2, 2);
+      marbleTexture.repeat.set(3, 3); // Scale for statue
+      console.log('Painted plaster diffuse texture loaded from Polyhaven');
     },
     undefined,
     () => {
@@ -503,6 +511,54 @@ function processStatueModel(model, scale) {
     }
   );
 
+  // 2. Normal map GL (for surface details)
+  textureLoader.load(
+    "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/painted_plaster_wall/painted_plaster_wall_nor_gl_4k.png",
+    (texture) => {
+      marbleNormalMap = texture;
+      marbleNormalMap.wrapS = THREE.RepeatWrapping;
+      marbleNormalMap.wrapT = THREE.RepeatWrapping;
+      marbleNormalMap.repeat.set(3, 3);
+      console.log('Painted plaster normal map (GL) loaded from Polyhaven');
+    },
+    undefined,
+    () => {
+      console.log('Normal map could not be loaded');
+    }
+  );
+
+  // 3. Ambient Occlusion map
+  textureLoader.load(
+    "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/painted_plaster_wall/painted_plaster_wall_ao_4k.png",
+    (texture) => {
+      marbleAOMap = texture;
+      marbleAOMap.wrapS = THREE.RepeatWrapping;
+      marbleAOMap.wrapT = THREE.RepeatWrapping;
+      marbleAOMap.repeat.set(3, 3);
+      console.log('Painted plaster AO map loaded from Polyhaven');
+    },
+    undefined,
+    () => {
+      console.log('AO map could not be loaded');
+    }
+  );
+
+  // 4. Roughness map
+  textureLoader.load(
+    "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/painted_plaster_wall/painted_plaster_wall_rough_4k.png",
+    (texture) => {
+      marbleRoughnessMap = texture;
+      marbleRoughnessMap.wrapS = THREE.RepeatWrapping;
+      marbleRoughnessMap.wrapT = THREE.RepeatWrapping;
+      marbleRoughnessMap.repeat.set(3, 3);
+      console.log('Painted plaster roughness map loaded from Polyhaven');
+    },
+    undefined,
+    () => {
+      console.log('Roughness map could not be loaded');
+    }
+  );
+
   // Merge to single geometry in WORLD space
   const meshes = [];
   model.traverse((child) => {
@@ -513,6 +569,7 @@ function processStatueModel(model, scale) {
   const mergedGeometry = new THREE.BufferGeometry();
   const positions = [];
   const normals = [];
+  const uvs = []; // UV koordinatları için
   const indices = [];
   let vertexOffset = 0;
 
@@ -529,6 +586,8 @@ function processStatueModel(model, scale) {
     };
     const index = geo.index;
 
+    const uv = geo.attributes.uv; // UV attribute ekle
+
     for (let i = 0; i < pos.count; i++) {
       tempPos
         .set(pos.getX(i), pos.getY(i), pos.getZ(i))
@@ -539,6 +598,16 @@ function processStatueModel(model, scale) {
       else tempNorm.set(0, 1, 0);
       tempNorm.transformDirection(mesh.matrixWorld).normalize();
       normals.push(tempNorm.x, tempNorm.y, tempNorm.z);
+
+      // UV koordinatlarını kopyala veya procedural oluştur
+      if (uv) {
+        uvs.push(uv.getX(i), uv.getY(i));
+      } else {
+        // Basit planar projeksiyon
+        const u = (tempPos.x * 0.1 + 0.5) % 1;
+        const v = (tempPos.z * 0.1 + 0.5) % 1;
+        uvs.push(u, v);
+      }
     }
 
     if (index) {
@@ -563,19 +632,27 @@ function processStatueModel(model, scale) {
     "normal",
     new THREE.Float32BufferAttribute(normals, 3)
   );
+  mergedGeometry.setAttribute(
+    "uv",
+    new THREE.Float32BufferAttribute(uvs, 2)
+  );
   mergedGeometry.setIndex(indices);
   mergedGeometry.computeBoundingBox();
 
   const box = mergedGeometry.boundingBox;
   const center = box.getCenter(new THREE.Vector3());
 
-  // Material
-  const statueMaterial = new THREE.MeshPhongMaterial({
-    color: 0xdddddd,
-    map: null,
-    emissive: 0x000000,
-    specular: 0x111111,
-    shininess: 10,
+  // Material - MeshStandardMaterial with PBR support for plaster
+  const statueMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: null,              // Diffuse texture
+    normalMap: null,        // Normal map for details
+    normalScale: new THREE.Vector2(0.8, 0.8), // Normal intensity
+    aoMap: null,            // Ambient occlusion
+    aoMapIntensity: 0.6,    // AO intensity
+    roughnessMap: null,     // Roughness texture
+    roughness: 0.7,         // Default roughness for plaster
+    metalness: 0.0,         // Plaster is non-metallic
     transparent: true,
     opacity: 0,
     side: THREE.DoubleSide,
@@ -711,13 +788,39 @@ function render() {
     // Hover'u mevcut değerde dondur (artık oynamayacak)
     targetProgress = animationProgress;
 
-    // White statue material & texture
+    // Apply all PBR textures
     if (marbleTexture) {
       real3DStatue.userData.material.map = marbleTexture;
       real3DStatue.userData.material.color = new THREE.Color(0xffffff);
+      console.log('Diffuse texture applied');
     } else {
       real3DStatue.userData.material.color = new THREE.Color(0xe0e0e0);
+      console.log('Using fallback color');
     }
+
+    // Normal map for surface detail
+    if (marbleNormalMap) {
+      real3DStatue.userData.material.normalMap = marbleNormalMap;
+      real3DStatue.userData.material.normalScale = new THREE.Vector2(0.8, 0.8);
+      console.log('Normal map applied to statue');
+    }
+
+    // Ambient Occlusion map for depth
+    if (marbleAOMap) {
+      real3DStatue.userData.material.aoMap = marbleAOMap;
+      real3DStatue.userData.material.aoMapIntensity = 0.6;
+      // AO map requires second UV set
+      real3DStatue.geometry.setAttribute('uv2', real3DStatue.geometry.attributes.uv);
+      console.log('AO map applied to statue');
+    }
+
+    // Roughness map for surface variation
+    if (marbleRoughnessMap) {
+      real3DStatue.userData.material.roughnessMap = marbleRoughnessMap;
+      real3DStatue.userData.material.roughness = 1.0; // Let map control
+      console.log('Roughness map applied to statue');
+    }
+
     real3DStatue.userData.material.needsUpdate = true;
     real3DStatue.visible = true;
     real3DStatue.userData.material.opacity = 0;
