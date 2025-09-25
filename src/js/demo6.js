@@ -108,14 +108,14 @@ const diskMaterials = [
 
 const statueMaterials = [
   new THREE.LineBasicMaterial({
-    color: 0xffd700,
+    color: 0xffffff,  // Beyaz
     transparent: true,
-    opacity: 0.6,
+    opacity: 0.2,
   }),
   new THREE.LineBasicMaterial({
-    color: 0xffa500,
+    color: 0xf0f0f0,  // Açık beyaz/gri
     transparent: true,
-    opacity: 0.6,
+    opacity: 0.2,
   }),
 ];
 
@@ -209,13 +209,13 @@ class Path {
     const currentSampler = this.isStatue ? statueSampler : sampler;
     if (!currentSampler) return;
 
-    if (this.baseVertices.length < (this.isStatue ? 15000 : 20000)) {
-      const pointsPerUpdate = this.isStatue ? 15 : 50;
+    if (this.baseVertices.length < (this.isStatue ? 30000 : 20000)) {  // Heykel için daha fazla nokta
+      const pointsPerUpdate = this.isStatue ? 30 : 50;  // Daha hızlı dolum
 
       for (let j = 0; j < pointsPerUpdate; j++) {
         let pointFound = false;
         let attempts = 0;
-        while (!pointFound && attempts < 50) {
+        while (!pointFound && attempts < 100) {  // Daha fazla deneme
           attempts++;
           currentSampler.sample(tempPosition); // statue için: LOCAL koordinat
 
@@ -239,7 +239,7 @@ class Path {
             if (!validForDisk) continue;
           }
 
-          const maxDistance = this.isStatue ? 0.3 : 0.4;
+          const maxDistance = this.isStatue ? 0.15 : 0.4;  // Heykel için daha sık noktalar
           if (!this.previousPoint) this.previousPoint = tempPosition.clone();
 
           if (tempPosition.distanceTo(this.previousPoint) < maxDistance) {
@@ -320,11 +320,11 @@ function updateDiskPositions() {
     const topY = -0.5 + animationProgress * 1;
     visibleDisks[2].position.y = topY;
 
-    // Heykeli disklerle birlikte kaldır
-    if (statueMeshRef && !modelRevealStarted) {
+    // Heykeli disklerle birlikte kaldır (her zaman, reveal başlamış olsa bile)
+    if (statueMeshRef) {
       statueMeshRef.position.y = -0.25 + animationProgress * 1;
     }
-    if (real3DStatue && !modelRevealStarted) {
+    if (real3DStatue) {
       real3DStatue.position.y = -0.25 + animationProgress * 1;
     }
   }
@@ -685,9 +685,9 @@ function processStatueModel(model, scale) {
   samplerMesh.position.copy(real3DStatue.position);
   statueSampler = new MeshSurfaceSampler(samplerMesh).build();
 
-  // Yellow line paths
+  // Yellow line paths - daha fazla path ile boşlukları doldur
   statuePaths = [];
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 20; i++) {  // 12'den 20'ye çıkardık
     const path = new Path(i, true);
     // depthTest = true kalsın; hizalamayı gözle doğru görürüz
     statuePaths.push(path);
@@ -744,7 +744,7 @@ function createFallbackStatue() {
   statueSampler = new MeshSurfaceSampler(samplerMesh).build();
 
   statuePaths = [];
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 20; i++) {  // Daha fazla path
     const path = new Path(i, true);
     statuePaths.push(path);
     group.add(path.line);
@@ -785,8 +785,8 @@ function render() {
   if (elapsedTime >= modelRevealDelay && !modelRevealStarted && real3DStatue) {
     modelRevealStarted = true;
 
-    // Hover'u mevcut değerde dondur (artık oynamayacak)
-    targetProgress = animationProgress;
+    // Hover'u dondurma, devam etsin
+    // targetProgress = animationProgress;
 
     // Apply all PBR textures
     if (marbleTexture) {
@@ -831,7 +831,7 @@ function render() {
     real3DStatue.userData.clippingPlane = modelClippingPlane;
 
     const box = real3DStatue.userData.boundingBox;
-    const worldY = real3DStatue.position.y;
+    const worldY = real3DStatue.position.y;  // Bu pozisyon hover ile değişecek
 
     real3DStatue.userData.clipMin = worldY + box.min.y;
     real3DStatue.userData.clipMax = worldY + box.max.y;
@@ -847,6 +847,12 @@ function render() {
   // REVEAL ANIMATION
   if (modelRevealStarted && real3DStatue) {
     modelRevealProgress = Math.min(1, modelRevealProgress + 0.004);
+
+    // Hover'dan dolayı değişen pozisyonu güncelle
+    const box = real3DStatue.userData.boundingBox;
+    const currentWorldY = real3DStatue.position.y;
+    real3DStatue.userData.clipMin = currentWorldY + box.min.y;
+    real3DStatue.userData.clipMax = currentWorldY + box.max.y;
 
     // White statue – clipping'i alttan üste ilerlet
     if (real3DStatue.userData.clippingPlane) {
@@ -890,7 +896,8 @@ function render() {
         );
         path.geometry.computeBoundingSphere();
         path.line.visible = true;
-        path.material.opacity = 0.6;
+        // Opacity'yi değiştirme, başlangıç değerini koru
+        // path.material.opacity = 0.6;
       } else {
         path.line.visible = false;
       }
