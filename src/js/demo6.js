@@ -7,6 +7,14 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 
+// FPS Counter
+const stats = new Stats();
+stats.showPanel(0); // 0: fps, 1: ms, 2: mb
+stats.dom.style.position = 'absolute';
+stats.dom.style.left = '10px';
+stats.dom.style.top = '10px';
+document.body.appendChild(stats.dom);
+
 const elContent = document.querySelector(".content");
 const pixelRatio = 2;
 
@@ -64,6 +72,7 @@ const mouse = new THREE.Vector2();
 
 // Reveal state
 let modelRevealStarted = false;
+let statueTexturesApplied = false;  // Statue texture'ları sadece bir kez uygula
 let modelRevealProgress = 0;
 const modelRevealDelay = 10000; // 10s
 let startTime = null;
@@ -73,6 +82,7 @@ let marbleNormalMap = null;
 let marbleAOMap = null;
 let marbleRoughnessMap = null;
 let diskRevealStarted = false;
+let diskTexturesApplied = false;  // Texture'ları sadece bir kez uygula
 let diskRevealProgress = [0, 0, 0];  // Her disk için ayrı progress
 let currentRevealingDisk = 0;  // Hangi disk reveal oluyor
 
@@ -214,7 +224,7 @@ class Path {
     if (!currentSampler) return;
 
     if (this.baseVertices.length < (this.isStatue ? 30000 : 20000)) {  // Heykel için daha fazla nokta
-      const pointsPerUpdate = this.isStatue ? 30 : 50;  // Daha hızlı dolum
+      const pointsPerUpdate = this.isStatue ? 45 : 75;  // %50 daha hızlı çizgi çizme
 
       for (let j = 0; j < pointsPerUpdate; j++) {
         let pointFound = false;
@@ -801,6 +811,7 @@ function onMouseMove(event) {
 window.addEventListener("mousemove", onMouseMove, false);
 
 function render() {
+  stats.begin();
   controls.update();
 
   if (!startTime) startTime = Date.now();
@@ -818,23 +829,31 @@ function render() {
     }
   }
 
-  paths.forEach((path) => {
-    path.update();
-    path.updatePositions();
-  });
-
-  statuePaths.forEach((path) => {
-    if (!modelRevealStarted) {
+  // Only update paths that are still visible
+  if (!diskRevealStarted) {
+    paths.forEach((path) => {
       path.update();
       path.updatePositions();
-    }
-  });
+    });
+  }
+
+  if (!modelRevealStarted) {
+    statuePaths.forEach((path) => {
+      path.update();
+      path.updatePositions();
+    });
+  }
 
   // SEQUENTIAL REVEAL START (at 10 seconds)
   const elapsedTime = Date.now() - startTime;
   if (elapsedTime >= modelRevealDelay && !diskRevealStarted) {
     diskRevealStarted = true;
-    console.log('Starting sequential reveal: bottom disk -> middle -> top -> statue');
+    // Sequential reveal starting
+  }
+
+  // Apply textures only once when starting reveal
+  if (diskRevealStarted && !diskTexturesApplied) {
+    diskTexturesApplied = true;
 
     // Apply textures to all disks and prepare them
     real3DDisks.forEach((disk, index) => {
@@ -872,30 +891,29 @@ function render() {
     // Wait for last disk to complete
     if (diskRevealProgress[2] >= 1) {
       modelRevealStarted = true;
-      console.log('Starting statue reveal after all disks completed');
+      // Starting statue reveal
     }
   }
 
-  // Continue with statue reveal preparation if triggered
-  if (modelRevealStarted && real3DStatue && !real3DStatue.visible) {
-    // Hover'u dondurma, devam etsin
-    // targetProgress = animationProgress;
+  // Apply statue textures only once when starting reveal
+  if (modelRevealStarted && real3DStatue && !statueTexturesApplied) {
+    statueTexturesApplied = true;
 
     // Apply all PBR textures
     if (marbleTexture) {
       real3DStatue.userData.material.map = marbleTexture;
       real3DStatue.userData.material.color = new THREE.Color(0xdddddd);  // Daha koyu beyaz
-      console.log('Diffuse texture applied');
+      // Diffuse texture applied
     } else {
       real3DStatue.userData.material.color = new THREE.Color(0xc0c0c0);  // Daha koyu gri
-      console.log('Using fallback color');
+      // Using fallback color
     }
 
     // Normal map for surface detail
     if (marbleNormalMap) {
       real3DStatue.userData.material.normalMap = marbleNormalMap;
       real3DStatue.userData.material.normalScale = new THREE.Vector2(0.3, 0.3);  // Azaltıldı
-      console.log('Normal map applied to statue');
+      // Normal map applied
     }
 
     // Ambient Occlusion map for depth
@@ -904,7 +922,7 @@ function render() {
       real3DStatue.userData.material.aoMapIntensity = 0.4;  // Azaltıldı
       // AO map requires second UV set
       real3DStatue.geometry.setAttribute('uv2', real3DStatue.geometry.attributes.uv);
-      console.log('AO map applied to statue');
+      // AO map applied
     }
 
     // Roughness map for surface variation
@@ -912,7 +930,7 @@ function render() {
       real3DStatue.userData.material.roughnessMap = marbleRoughnessMap;
       real3DStatue.userData.material.roughness = 1.0; // Let map control
       real3DStatue.userData.material.envMapIntensity = 0.1;  // Minimum yansıma
-      console.log('Roughness map applied to statue');
+      // Roughness map applied
     }
 
     real3DStatue.userData.material.needsUpdate = true;
@@ -948,8 +966,8 @@ function render() {
       disk.visible = true;
     }
 
-    // Animate current disk (2 seconds per disk)
-    diskRevealProgress[diskIndex] = Math.min(1, diskRevealProgress[diskIndex] + 0.01);  // 2 secs @ 60fps
+    // Animate current disk (1.33 seconds per disk - %50 faster)
+    diskRevealProgress[diskIndex] = Math.min(1, diskRevealProgress[diskIndex] + 0.015);  // 1.33 secs @ 60fps
 
     // Disk positions are already updated in main render loop
 
@@ -1023,13 +1041,13 @@ function render() {
       }
 
       currentRevealingDisk++;
-      console.log(`Disk ${diskIndex} complete, moving to next`);
+      // Disk complete, moving to next
     }
   }
 
   // STATUE REVEAL ANIMATION
   if (modelRevealStarted && real3DStatue) {
-    modelRevealProgress = Math.min(1, modelRevealProgress + 0.004);
+    modelRevealProgress = Math.min(1, modelRevealProgress + 0.006);  // %50 faster
 
     // Hover'dan dolayı değişen pozisyonu güncelle
     const box = real3DStatue.userData.boundingBox;
@@ -1108,6 +1126,7 @@ function render() {
   );
 
   composer.render();
+  stats.end();
 }
 
 window.addEventListener("resize", onWindowResize, false);
